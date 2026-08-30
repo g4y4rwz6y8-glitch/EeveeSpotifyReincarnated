@@ -20,6 +20,44 @@ static const NSInteger kEeveeWallpaperViewTag = 918273;
 - (AVPlayerLayer *)playerLayer { return (AVPlayerLayer *)self.layer; }
 @end
 
+#pragma mark - Screen Context Registry
+
+@interface EeveeScreenRegistry : NSObject
++ (instancetype)shared;
+- (NSString *)identifyScreenContext:(UIViewController *)vc;
+- (UIView *)findBackgroundContainerInView:(UIView *)view forScreen:(NSString *)screenType;
+@end
+
+@implementation EeveeScreenRegistry
+
+static EeveeScreenRegistry *sharedInstance = nil;
+
++ (instancetype)shared {
+    static dispatch_once_t token;
+    dispatch_once(&token, ^{
+        sharedInstance = [[self alloc] init];
+    });
+    return sharedInstance;
+}
+
+- (NSString *)identifyScreenContext:(UIViewController *)vc {
+    NSString *className = NSStringFromClass([vc class]);
+    
+    if ([className containsString:@"NowPlaying"]) return @"NowPlaying";
+    if ([className containsString:@"Home"] || [className containsString:@"Browse"]) return @"Home";
+    if ([className containsString:@"Search"]) return @"Search";
+    if ([className containsString:@"Collection"] || [className containsString:@"YourLibrary"] || [className containsString:@"Library"]) return @"Library";
+    if ([className containsString:@"Settings"] || [className containsString:@"Preferences"]) return @"Settings";
+    
+    return nil;
+}
+
+- (UIView *)findBackgroundContainerInView:(UIView *)view forScreen:(NSString *)screenType {
+    return [EeveeThemeFilter findDeepestBackgroundCanvasInView:view screenType:screenType];
+}
+
+@end
+
 #pragma mark - Success pill toast
 
 static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
@@ -83,12 +121,11 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
 - (void)eevee_dumpView:(UIView *)view depth:(NSInteger)depth intoLog:(NSMutableString *)log;
 - (void)eevee_applyCanvasTheme;
 - (BOOL)eevee_findAndThemeMixingBackground:(UIView *)view theme:(ThemeManager *)tm;
-- (void)eevee_applyWallpaperIfNeeded;
+- (void)eevee_applyWallpaperToContainer:(UIView *)container;
 - (UIView *)eevee_buildWallpaperView;
 - (UIView *)eevee_buildImageWallpaperView:(NSString *)path;
 - (UIView *)eevee_buildGIFWallpaperView:(NSString *)path;
 - (UIView *)eevee_buildVideoWallpaperView:(NSString *)path;
-- (void)eevee_applyFontColorsToView:(UIView *)view theme:(ThemeManager *)tm;
 @end
 
 @implementation UIViewController (EeveeThemeEngine)
@@ -222,14 +259,14 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     }
 }
 
-#pragma mark Canvas theming (confirmed Now Playing background)
+#pragma mark Canvas theming (Now Playing background)
 
 - (void)eevee_applyCanvasTheme {
     ThemeManager *tm = [ThemeManager shared];
     if (!tm.isThemeEnabled || tm.activeThemeName.length == 0) return;
 
     NSString *vcName = NSStringFromClass([self class]);
-    if (![vcName isEqualToString:@"NowPlaying_ViewPageImpl.NowPlayingOverlayContainer"]) return;
+    if (![vcName containsString:@"NowPlaying"]) return;
 
     [self eevee_findAndThemeMixingBackground:self.view theme:tm];
 }
@@ -252,27 +289,32 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     return NO;
 }
 
-#pragma mark Wallpaper (scoped — call sites decide which screens get it)
+#pragma mark Wallpaper (with Auto Layout constraints)
 
-- (void)eevee_applyWallpaperIfNeeded {
+- (void)eevee_applyWallpaperToContainer:(UIView *)container {
     ThemeManager *tm = [ThemeManager shared];
-    if (!tm.isThemeEnabled) return;
-
-    UIView *targetView = self.view;
-    UIView *existing = [targetView viewWithTag:kEeveeWallpaperViewTag];
-
     if (![tm hasWallpaper]) {
+        UIView *existing = [container viewWithTag:kEeveeWallpaperViewTag];
         [existing removeFromSuperview];
         return;
     }
-    if (existing) return; // rebuilt only when wallpaper is cleared then reset — see ThemeSettingsViewController
+
+    UIView *existing = [container viewWithTag:kEeveeWallpaperViewTag];
+    if (existing) return;
 
     UIView *wallpaperView = [self eevee_buildWallpaperView];
     if (wallpaperView) {
         wallpaperView.tag = kEeveeWallpaperViewTag;
-        wallpaperView.frame = targetView.bounds;
-        wallpaperView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [targetView insertSubview:wallpaperView atIndex:0];
+        wallpaperView.translatesAutoresizingMaskIntoConstraints = NO;
+        [container insertSubview:wallpaperView atIndex:0];
+
+        // Auto Layout constraint pinning (leading, trailing, top, bottom)
+        [NSLayoutConstraint activateConstraints:@[
+            [wallpaperView.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+            [wallpaperView.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
+            [wallpaperView.topAnchor constraintEqualToAnchor:container.topAnchor],
+            [wallpaperView.bottomAnchor constraintEqualToAnchor:container.bottomAnchor]
+        ]];
     }
 }
 
@@ -346,24 +388,6 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     return view;
 }
 
-#pragma mark Filtered font coloring
-
-- (void)eevee_applyFontColorsToView:(UIView *)view theme:(ThemeManager *)tm {
-    if ([EeveeThemeFilter isCardOrCellSurface:view]) return;
-
-    UIColor *textColor = [tm colorForKey:@"textColor" fallback:nil];
-    if (textColor) {
-        if ([view isKindOfClass:[UILabel class]]) {
-            ((UILabel *)view).textColor = textColor;
-        } else if ([view isKindOfClass:[UIButton class]]) {
-            [((UIButton *)view) setTitleColor:textColor forState:UIControlStateNormal];
-        }
-    }
-    for (UIView *sub in view.subviews) {
-        [self eevee_applyFontColorsToView:sub theme:tm];
-    }
-}
-
 @end
 
 #pragma mark - Global refresh
@@ -377,7 +401,7 @@ static void RefreshAppUI(void) {
     });
 }
 
-#pragma mark - Hooks (exactly two — each overrides a distinct method, no duplicates)
+#pragma mark - Hooks (universal viewDidAppear and viewDidLayoutSubviews)
 
 %hook UIViewController
 
@@ -393,15 +417,32 @@ static void RefreshAppUI(void) {
 - (void)viewDidLayoutSubviews {
     %orig;
 
-    [self eevee_applyCanvasTheme];
+    ThemeManager *tm = [ThemeManager shared];
+    if (!tm.isThemeEnabled || tm.activeThemeName.length == 0) return;
 
-    NSString *vcName = NSStringFromClass([self class]);
-    if ([vcName isEqualToString:@"NowPlaying_ViewPageImpl.NowPlayingOverlayContainer"]) {
-        [self eevee_applyWallpaperIfNeeded];
-        ThemeManager *tm = [ThemeManager shared];
-        if (tm.isThemeEnabled && tm.activeThemeName.length > 0) {
-            [self eevee_applyFontColorsToView:self.view theme:tm];
-        }
+    EeveeScreenRegistry *registry = [EeveeScreenRegistry shared];
+    NSString *screenType = [registry identifyScreenContext:self];
+
+    if (!screenType) return;
+
+    // Apply wallpaper to background container (ALL screens)
+    UIView *bgContainer = [registry findBackgroundContainerInView:self.view forScreen:screenType];
+    if (bgContainer) {
+        [self eevee_applyWallpaperToContainer:bgContainer];
+    }
+
+    // Apply canvas recoloring (NowPlaying only—has MixingBackgroundView)
+    if ([screenType isEqualToString:@"NowPlaying"]) {
+        [self eevee_applyCanvasTheme];
+    }
+
+    // Apply font colors globally (all screens, max depth 20)
+    UIColor *textColor = [tm colorForKey:@"textColor" fallback:nil];
+    if (textColor) {
+        [EeveeThemeFilter recursivelyApplyFontColor:textColor
+                                             toView:self.view
+                                skippingCardOrCellSurfaces:YES
+                                                   depth:20];
     }
 }
 
