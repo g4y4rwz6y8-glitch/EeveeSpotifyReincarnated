@@ -85,7 +85,6 @@ static NSMutableSet *gDynamicBlocklist = nil;
 }
 
 + (BOOL)isCardOrCellSurface:(UIView *)view {
-    NSString *className = NSStringFromClass([view class]);
     return [self classNameMatchesBlocklist:className];
 }
 
