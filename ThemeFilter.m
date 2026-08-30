@@ -7,10 +7,12 @@ static NSMutableSet *gDynamicBlocklist = nil;
 #pragma mark - Blocklist Keywords (Static)
 
 + (NSSet<NSString *> *)blocklistKeywords {
-    return @[@"Cell", @"Card", @"Row", @"Button", @"Artwork", @"Image",
-             @"Label", @"Cover", @"Chip", @"Badge", @"Icon", @"Avatar",
-             @"Track", @"Artist", @"Album", @"Playlist", @"Section",
-             @"Header", @"Footer", @"Separator", @"Divider", @"Indicator"];
+    return [NSSet setWithArray:@[
+        @"Cell", @"Card", @"Row", @"Button", @"Artwork", @"Image",
+        @"Label", @"Cover", @"Chip", @"Badge", @"Icon", @"Avatar",
+        @"Track", @"Artist", @"Album", @"Playlist", @"Section",
+        @"Header", @"Footer", @"Separator", @"Divider", @"Indicator"
+    ]];
 }
 
 #pragma mark - Canvas Allowlist
@@ -69,6 +71,8 @@ static NSMutableSet *gDynamicBlocklist = nil;
 #pragma mark - Canvas Detection
 
 + (BOOL)isBackgroundCanvas:(UIView *)view {
+    if (!view) return NO;
+    NSString *className = NSStringFromClass([view class]);
     
     if ([self classNameMatchesBlocklist:className]) return NO;
     if ([[self canvasAllowlist] containsObject:className]) return YES;
@@ -84,12 +88,16 @@ static NSMutableSet *gDynamicBlocklist = nil;
 }
 
 + (BOOL)isCardOrCellSurface:(UIView *)view {
+    if (!view) return NO;
+    NSString *className = NSStringFromClass([view class]);
     return [self classNameMatchesBlocklist:className];
 }
 
 #pragma mark - Screen-Aware Canvas Finder
 
 + (UIView *)findDeepestBackgroundCanvasInView:(UIView *)view screenType:(NSString *)screenType {
+    if (!view) return nil;
+    
     // Reject known card/cell surfaces immediately
     if ([self isCardOrCellSurface:view]) return nil;
     
@@ -125,9 +133,9 @@ static NSMutableSet *gDynamicBlocklist = nil;
 
 + (void)recursivelyApplyFontColor:(UIColor *)color 
                            toView:(UIView *)view 
-              skippingCardOrCellSurfaces:(BOOL)skipCards 
-                                 depth:(NSInteger)maxDepth {
-    if (maxDepth <= 0 || !color) return;
+       skippingCardOrCellSurfaces:(BOOL)skipCards 
+                            depth:(NSInteger)maxDepth {
+    if (!view || maxDepth <= 0 || !color) return;
     
     // Skip card/cell surfaces if requested
     if (skipCards && [self isCardOrCellSurface:view]) return;
@@ -145,8 +153,8 @@ static NSMutableSet *gDynamicBlocklist = nil;
     for (UIView *sub in view.subviews) {
         [self recursivelyApplyFontColor:color 
                                 toView:sub 
-                   skippingCardOrCellSurfaces:skipCards 
-                                      depth:maxDepth - 1];
+    skippingCardOrCellSurfaces:skipCards 
+                                 depth:maxDepth - 1];
     }
 }
 
