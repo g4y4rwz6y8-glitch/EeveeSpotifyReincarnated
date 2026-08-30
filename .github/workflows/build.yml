@@ -1,3 +1,11 @@
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Build tweak package
+        run: |
+          export THEOS=$HOME/theos
+          make package FINALPACKAGE=1
+
 name: Build EeveeThemeEngine
 
 on:
