@@ -69,7 +69,6 @@ static NSMutableSet *gDynamicBlocklist = nil;
 #pragma mark - Canvas Detection
 
 + (BOOL)isBackgroundCanvas:(UIView *)view {
-    NSString *className = NSStringFromClass([view class]);
     
     if ([self classNameMatchesBlocklist:className]) return NO;
     if ([[self canvasAllowlist] containsObject:className]) return YES;
