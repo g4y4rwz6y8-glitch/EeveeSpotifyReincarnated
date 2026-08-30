@@ -1,11 +1,3 @@
-      - name: Install ldid
-        run: brew install ldid
-
-      - name: Build tweak package
-        run: |
-          export THEOS=$HOME/theos
-          make package FINALPACKAGE=1
-
 name: Build EeveeThemeEngine
 
 on:
@@ -35,47 +27,14 @@ jobs:
           mkdir -p $THEOS/sdks
           mv iPhoneOS14.5.sdk $THEOS/sdks/
 
-      - name: Build tweak package
-        run: |
-          export THEOS=$HOME/theos
-          make package FINALPACKAGE=1
+      - name: Install ldid
+        run: brew install ldid
 
-      - name: Upload dylib/deb artifact
+      - name: Build tweak package
+        run: make package FINALPACKAGE=1
+
+      - name: Upload dylib
         uses: actions/upload-artifact@v4
         with:
           name: EeveeThemeEngine-dylib
           path: packages/*.deb
-
-      # ---- everything below this line depends on how you're getting the
-      # Spotify IPA and how you sign it — fill in to match your setup ----
-
-      - name: Decode source IPA
-        if: ${{ false }} # flip this on once SPOTIFY_IPA_BASE64 secret is set
-        run: |
-          echo "${{ secrets.SPOTIFY_IPA_BASE64 }}" | base64 --decode > Spotify.ipa
-
-      - name: Inject dylib into IPA
-        if: ${{ false }} # flip this on alongside the step above
-        run: |
-          mkdir -p extracted
-          unzip -q Spotify.ipa -d extracted
-          APP_DIR=$(find extracted/Payload -maxdepth 1 -name "*.app")
-          mkdir -p "$APP_DIR/Frameworks"
-          cp packages/*.dylib "$APP_DIR/Frameworks/EeveeThemeEngine.dylib" 2>/dev/null || \
-            (cd packages && ar x *.deb && tar xf data.tar.* -C "$APP_DIR/../.." )
-          # insert_dylib or optool call goes here to add a LC_LOAD_DYLIB entry
-          # pointing at @executable_path/Frameworks/EeveeThemeEngine.dylib
-
-      - name: Re-sign and repackage IPA
-        if: ${{ false }} # flip this on once signing identity/method is decided
-        run: |
-          # ldid -S or zsign with your cert/provisioning profile goes here
-          cd extracted
-          zip -qr ../Spotify-themed.ipa Payload
-
-      - name: Upload signed IPA
-        if: ${{ false }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: Spotify-themed
-          path: Spotify-themed.ipa
