@@ -95,7 +95,6 @@ static NSMutableSet *gDynamicBlocklist = nil;
     // Reject known card/cell surfaces immediately
     if ([self isCardOrCellSurface:view]) return nil;
     
-    NSString *className = NSStringFromClass([view class]);
     CGRect screen = [UIScreen mainScreen].bounds;
     CGRect frameInWindow = [view convertRect:view.bounds toView:nil];
     CGFloat coverageRatio = (frameInWindow.size.width * frameInWindow.size.height) /
