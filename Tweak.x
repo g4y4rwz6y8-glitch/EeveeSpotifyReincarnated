@@ -72,7 +72,7 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     });
 }
 
-#pragma mark - All helper methods (plain category — no %new needed, none of these override anything)
+#pragma mark - All helper methods (plain category, not inside a hook block)
 
 @interface UIViewController (EeveeThemeEngine)
 - (void)setupEeveeThemeButton;
