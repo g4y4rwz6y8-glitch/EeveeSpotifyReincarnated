@@ -1,5 +1,8 @@
 #import "ThemeSettingsViewController.h"
 #import "ThemeManager.h"
+#import <Photos/Photos.h>
+#import <AVFoundation/AVFoundation.h>
+#import <MobileCoreServices/MobileCoreServices.h>
 
 typedef NS_ENUM(NSInteger, ThemeSettingsSection) {
     ThemeSettingsSectionToggle = 0,
@@ -228,32 +231,148 @@ typedef NS_ENUM(NSInteger, ThemeSettingsSection) {
     NSItemProvider *provider = result.itemProvider;
     __weak typeof(self) weakSelf = self;
 
-    if ([provider hasItemConformingToTypeIdentifier:@"public.mpeg-4"]) {
-        [provider loadFileRepresentationForTypeIdentifier:@"public.mpeg-4" completionHandler:^(NSURL *url, NSError *error) {
-            if (!url) return;
+    // Prefer PHAsset-backed results when available — gives us access to original files and proper handling of GIF/HEIC/Live Photos
+    if (result.assetIdentifier) {
+        PHAsset *asset = [PHAsset fetchAssetsWithLocalIdentifiers:@[result.assetIdentifier] options:nil].firstObject;
+        if (!asset) return;
+
+        if (asset.mediaType == PHAssetMediaTypeVideo) {
+            PHVideoRequestOptions *vopts = [PHVideoRequestOptions new];
+            vopts.networkAccessAllowed = YES;
+            [[PHImageManager defaultManager] requestExportSessionForVideo:asset
+                                                                   options:vopts
+                                                               exportPreset:AVAssetExportPresetPassthrough
+                                                            resultHandler:^(AVAssetExportSession *exportSession, NSDictionary *info) {
+                if (!exportSession) return;
+
+                NSString *tmpName = [NSTemporaryDirectory() stringByAppendingPathComponent:@"eevee_temp_wallpaper.mp4"];
+                NSURL *outURL = [NSURL fileURLWithPath:tmpName];
+                // Remove if exists
+                [[NSFileManager defaultManager] removeItemAtURL:outURL error:nil];
+                exportSession.outputURL = outURL;
+                exportSession.outputFileType = AVFileTypeMPEG4;
+                [exportSession exportAsynchronouslyWithCompletionHandler:^{
+                    if (exportSession.status == AVAssetExportSessionStatusCompleted) {
+                        NSError *saveErr;
+                        [[ThemeManager shared] saveWallpaperFromURL:outURL type:EeveeWallpaperTypeVideo error:&saveErr];
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            [weakSelf.tableView reloadData];
+                            [weakSelf showAlertTitle:@"Wallpaper Set" message:@"Video wallpaper applied."];
+                        });
+                    } else {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            [weakSelf showAlertTitle:@"Error" message:@"Failed to export selected video."];
+                        });
+                    }
+                }];
+            }];
+            return;
+        }
+
+        // Image (could be GIF/HEIC/JPEG)
+        PHImageRequestOptions *opts = [PHImageRequestOptions new];
+        opts.networkAccessAllowed = YES;
+        opts.version = PHImageRequestOptionsVersionOriginal;
+        [[PHImageManager defaultManager] requestImageDataForAsset:asset
+                                                          options:opts
+                                                    resultHandler:^(NSData *imageData, NSString *dataUTI, UIImageOrientation orientation, NSDictionary *info) {
+            if (!imageData) return;
+
+            BOOL isGIF = (dataUTI != nil && UTTypeConformsTo((__bridge CFStringRef)dataUTI, kUTTypeGIF));
+            NSString *tmpName = isGIF ? @"eevee_temp_wallpaper.gif" : @"eevee_temp_wallpaper.png";
+            NSURL *tmpURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:tmpName]];
+            [imageData writeToURL:tmpURL atomically:YES];
+
             NSError *saveErr;
-            [[ThemeManager shared] saveWallpaperFromURL:url type:EeveeWallpaperTypeVideo error:&saveErr];
+            [[ThemeManager shared] saveWallpaperFromURL:tmpURL type:(isGIF?EeveeWallpaperTypeGIF:EeveeWallpaperTypeImage) error:&saveErr];
             dispatch_async(dispatch_get_main_queue(), ^{
                 [weakSelf.tableView reloadData];
-                [weakSelf showAlertTitle:@"Wallpaper Set" message:@"Video wallpaper applied."];
+                [weakSelf showAlertTitle:@"Wallpaper Set" message:(isGIF?@"GIF wallpaper applied.":@"Image wallpaper applied.")];
             });
         }];
-    } else if ([provider hasItemConformingToTypeIdentifier:@"com.compuserve.gif"]) {
-        [provider loadFileRepresentationForTypeIdentifier:@"com.compuserve.gif" completionHandler:^(NSURL *url, NSError *error) {
+        return;
+    }
+
+    // Fallback: inspect provided type identifiers and try to load the best match
+    NSArray<NSString *> *types = provider.registeredTypeIdentifiers;
+    NSString *chosenType = nil;
+    EeveeWallpaperType chosenWallpaperType = EeveeWallpaperTypeImage;
+    for (NSString *uti in types) {
+        // video types
+        if (UTTypeConformsTo((__bridge CFStringRef)uti, kUTTypeMovie) || UTTypeConformsTo((__bridge CFStringRef)uti, kUTTypeVideo) || [uti.lowercaseString containsString:@"mpeg-4"]) {
+            chosenType = uti;
+            chosenWallpaperType = EeveeWallpaperTypeVideo;
+            break;
+        }
+        // gif
+        if (UTTypeConformsTo((__bridge CFStringRef)uti, kUTTypeGIF) || [uti.lowercaseString containsString:@"gif"]) {
+            chosenType = uti;
+            chosenWallpaperType = EeveeWallpaperTypeGIF;
+            break;
+        }
+        // generic image
+        if (UTTypeConformsTo((__bridge CFStringRef)uti, kUTTypeImage)) {
+            chosenType = uti;
+            chosenWallpaperType = EeveeWallpaperTypeImage;
+            break;
+        }
+    }
+
+    if (chosenType) {
+        [provider loadFileRepresentationForTypeIdentifier:chosenType completionHandler:^(NSURL *url, NSError *error) {
             if (!url) return;
+
+            // The provided URL may be in a temporary location or be security-scoped; copy to our own temp file
+            NSString *ext = chosenWallpaperType == EeveeWallpaperTypeVideo ? @"mp4" : (chosenWallpaperType == EeveeWallpaperTypeGIF ? @"gif" : @"png");
+            NSURL *tmpURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[@"eevee_temp_wallpaper" stringByAppendingPathExtension:ext]]];
+            // Remove any existing
+            [[NSFileManager defaultManager] removeItemAtURL:tmpURL error:nil];
+
+            BOOL started = NO;
+            if ([url respondsToSelector:@selector(startAccessingSecurityScopedResource)]) {
+                started = [url startAccessingSecurityScopedResource];
+            }
+
+            NSError *copyErr = nil;
+            BOOL ok = [[NSFileManager defaultManager] copyItemAtURL:url toURL:tmpURL error:&copyErr];
+            if (!ok) {
+                // As a fallback, try reading data and writing
+                NSData *d = [NSData dataWithContentsOfURL:url options:0 error:&copyErr];
+                if (d) {
+                    [d writeToURL:tmpURL options:NSDataWritingAtomic error:&copyErr];
+                }
+            }
+
+            if (started) { [url stopAccessingSecurityScopedResource]; }
+
+            if (![[NSFileManager defaultManager] fileExistsAtPath:tmpURL.path]) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [weakSelf showAlertTitle:@"Error" message:@"Failed to obtain the selected file."];
+                });
+                return;
+            }
+
             NSError *saveErr;
-            [[ThemeManager shared] saveWallpaperFromURL:url type:EeveeWallpaperTypeGIF error:&saveErr];
+            [[ThemeManager shared] saveWallpaperFromURL:tmpURL type:chosenWallpaperType error:&saveErr];
             dispatch_async(dispatch_get_main_queue(), ^{
                 [weakSelf.tableView reloadData];
-                [weakSelf showAlertTitle:@"Wallpaper Set" message:@"GIF wallpaper applied."];
+                NSString *msg = (chosenWallpaperType == EeveeWallpaperTypeVideo) ? @"Video wallpaper applied." : (chosenWallpaperType == EeveeWallpaperTypeGIF) ? @"GIF wallpaper applied." : @"Image wallpaper applied.";
+                [weakSelf showAlertTitle:@"Wallpaper Set" message:msg];
             });
         }];
-    } else if ([provider canLoadObjectOfClass:[UIImage class]]) {
+        return;
+    }
+
+    // Last resort: try loading UIImage
+    if ([provider canLoadObjectOfClass:[UIImage class]]) {
         [provider loadObjectOfClass:[UIImage class] completionHandler:^(UIImage *image, NSError *error) {
             if (!image) return;
-            NSData *pngData = UIImagePNGRepresentation(image);
+            NSData *imgData = UIImagePNGRepresentation(image);
+            if (!imgData) imgData = UIImageJPEGRepresentation(image, 0.9);
+            if (!imgData) return;
+
             NSURL *tempURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"eevee_temp_wallpaper.png"]];
-            [pngData writeToURL:tempURL atomically:YES];
+            [imgData writeToURL:tempURL atomically:YES];
             NSError *saveErr;
             [[ThemeManager shared] saveWallpaperFromURL:tempURL type:EeveeWallpaperTypeImage error:&saveErr];
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -261,7 +380,11 @@ typedef NS_ENUM(NSInteger, ThemeSettingsSection) {
                 [weakSelf showAlertTitle:@"Wallpaper Set" message:@"Image wallpaper applied."];
             });
         }];
+        return;
     }
+
+    // If we get here, we couldn't handle the picked item
+    [self showAlertTitle:@"Unsupported" message:@"The selected item type is not supported."];
 }
 
 #pragma mark - Helpers
