@@ -360,7 +360,15 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     Class FLAnimatedImageClass = NSClassFromString(@"FLAnimatedImage");
     Class FLAnimatedImageViewClass = NSClassFromString(@"FLAnimatedImageView");
     if (FLAnimatedImageClass && FLAnimatedImageViewClass) {
-        id animated = [[FLAnimatedImageClass alloc] initWithAnimatedGIFData:data];
+    // Try using the correct initializer: initWithAnimatedGIFData: or falling back to init
+    id animated = nil;
+    if ([FLAnimatedImageClass respondsToSelector:@selector(animatedImageWithGIFData:)]) {
+        animated = [FLAnimatedImageClass performSelector:@selector(animatedImageWithGIFData:) withObject:data];
+    } else if ([FLAnimatedImageClass instancesRespondToSelector:@selector(initWithAnimatedGIFData:)]) {
+        animated = [[FLAnimatedImageClass alloc] initWithAnimatedGIFData:data];
+    }
+    
+    if (animated) {
         id iv = [[FLAnimatedImageViewClass alloc] init];
         [iv setValue:animated forKey:@"animatedImage"];
         UIView *view = (UIView *)iv;
@@ -368,6 +376,7 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
         view.clipsToBounds = YES;
         return view;
     }
+}
 
     // Fallback: decode frames using ImageIO (compatibility mode)
     CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
