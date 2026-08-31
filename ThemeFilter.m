@@ -35,14 +35,12 @@ static NSMutableSet *gDynamicBlocklist = nil;
 #pragma mark - Blocklist Matching
 
 + (BOOL)classNameMatchesBlocklist:(NSString *)className {
-    // Check static keywords
     for (NSString *kw in [self blocklistKeywords]) {
         if ([className rangeOfString:kw options:NSCaseInsensitiveSearch].location != NSNotFound) {
             return YES;
         }
     }
     
-    // Check dynamic blocklist
     if (gDynamicBlocklist) {
         for (NSString *blocked in gDynamicBlocklist) {
             if ([className isEqualToString:blocked]) {
@@ -98,7 +96,6 @@ static NSMutableSet *gDynamicBlocklist = nil;
 + (UIView *)findDeepestBackgroundCanvasInView:(UIView *)view screenType:(NSString *)screenType {
     if (!view) return nil;
     
-    // Reject known card/cell surfaces immediately
     if ([self isCardOrCellSurface:view]) return nil;
     
     CGRect screen = [UIScreen mainScreen].bounds;
@@ -106,21 +103,18 @@ static NSMutableSet *gDynamicBlocklist = nil;
     CGFloat coverageRatio = (frameInWindow.size.width * frameInWindow.size.height) /
                              (screen.size.width * screen.size.height);
     
-    // Candidate criteria: covers >80% of screen and has few direct children (<5)
     BOOL isLargeEnough = coverageRatio > 0.80;
     BOOL hasMinimalDirectChildren = view.subviews.count < 5;
     
     if (isLargeEnough && hasMinimalDirectChildren) {
-        // Prefer deeper matches by recursing first, then returning current if no better candidate
         UIView *best = nil;
         for (UIView *sub in view.subviews) {
             UIView *candidate = [self findDeepestBackgroundCanvasInView:sub screenType:screenType];
-            if (candidate) best = candidate;  // Deeper = later in loop = preferred
+            if (candidate) best = candidate;
         }
-        return best ? best : view;  // Return self if no deeper candidate
+        return best ? best : view;
     }
     
-    // Not a canvas itself; recurse into children
     UIView *best = nil;
     for (UIView *sub in view.subviews) {
         UIView *candidate = [self findDeepestBackgroundCanvasInView:sub screenType:screenType];
@@ -137,19 +131,15 @@ static NSMutableSet *gDynamicBlocklist = nil;
                             depth:(NSInteger)maxDepth {
     if (!view || maxDepth <= 0 || !color) return;
     
-    // Skip card/cell surfaces if requested
     if (skipCards && [self isCardOrCellSurface:view]) return;
     
-    // Apply color to labels
     if ([view isKindOfClass:[UILabel class]]) {
         ((UILabel *)view).textColor = color;
     }
-    // Apply color to button text
     else if ([view isKindOfClass:[UIButton class]]) {
         [((UIButton *)view) setTitleColor:color forState:UIControlStateNormal];
     }
     
-    // Recurse into subviews
     for (UIView *sub in view.subviews) {
         [self recursivelyApplyFontColor:color 
                                 toView:sub 
