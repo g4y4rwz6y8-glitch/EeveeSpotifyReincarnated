@@ -330,7 +330,14 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
         if ([fImg respondsToSelector:@selector(animatedImageWithGIFData:)]) {
             anim = [fImg performSelector:@selector(animatedImageWithGIFData:) withObject:data];
         } else {
-            anim = [[fImg alloc] initWithAnimatedGIFData:data];
+            SEL initSel = NSSelectorFromString(@"initWithAnimatedGIFData:");
+            id alloced = [fImg alloc];
+            if ([alloced respondsToSelector:initSel]) {
+                #pragma clang diagnostic push
+                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                anim = [alloced performSelector:initSel withObject:data];
+                #pragma clang diagnostic pop
+            }
         }
         if (anim) {
             UIView *iv = [[fView alloc] init];
@@ -340,6 +347,25 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
             return iv;
         }
     }
+
+    CGImageSourceRef src = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
+    if (!src) return nil;
+    size_t count = CGImageSourceGetCount(src);
+    NSMutableArray *frames = [NSMutableArray array];
+    for (size_t i = 0; i < count; i++) {
+        CGImageRef cg = CGImageSourceCreateImageAtIndex(src, i, NULL);
+        if (cg) { [frames addObject:[UIImage imageWithCGImage:cg]]; CGImageRelease(cg); }
+    }
+    CFRelease(src);
+    
+    UIImageView *iv = [[UIImageView alloc] init];
+    iv.animationImages = frames;
+    iv.animationDuration = MAX(0.1 * frames.count, 0.5);
+    iv.contentMode = UIViewContentModeScaleAspectFill;
+    iv.clipsToBounds = YES;
+    [iv startAnimating];
+    return iv;
+}
 
     CGImageSourceRef src = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
     if (!src) return nil;
