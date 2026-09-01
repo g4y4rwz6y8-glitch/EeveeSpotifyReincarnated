@@ -9,30 +9,31 @@
 static UIButton *gThemeButton = nil;
 static const NSInteger kEeveeWallpaperViewTag = 918273;
 
-#pragma mark - Video wallpaper backing view
+#pragma mark - Video Wallpaper Backing
 
 @interface EeveeVideoLayerView : UIView
 @property (nonatomic, readonly) AVPlayerLayer *playerLayer;
-@end
-
-@interface EeveeVideoLayerView ()
 @property (nonatomic, strong) id eevee_endObserver;
 @end
 
 @implementation EeveeVideoLayerView
 + (Class)layerClass { return [AVPlayerLayer class]; }
 - (AVPlayerLayer *)playerLayer { return (AVPlayerLayer *)self.layer; }
+
 - (void)dealloc {
     if (_eevee_endObserver) {
         [[NSNotificationCenter defaultCenter] removeObserver:_eevee_endObserver];
         _eevee_endObserver = nil;
     }
-    // detach player to break any retain cycles
-    self.playerLayer.player = nil;
+    AVPlayer *player = self.playerLayer.player;
+    if (player) {
+        [player pause];
+        self.playerLayer.player = nil;
+    }
 }
 @end
 
-#pragma mark - Screen Context Registry
+#pragma mark - Screen Registry
 
 @interface EeveeScreenRegistry : NSObject
 + (instancetype)shared;
@@ -41,40 +42,39 @@ static const NSInteger kEeveeWallpaperViewTag = 918273;
 @end
 
 @implementation EeveeScreenRegistry
-
 static EeveeScreenRegistry *sharedInstance = nil;
-
 + (instancetype)shared {
     static dispatch_once_t token;
-    dispatch_once(&token, ^{
-        sharedInstance = [[self alloc] init];
-    });
+    dispatch_once(&token, ^{ sharedInstance = [[self alloc] init]; });
     return sharedInstance;
 }
 
 - (NSString *)identifyScreenContext:(UIViewController *)vc {
+    if (!vc) return nil;
     NSString *className = NSStringFromClass([vc class]);
-    
     if ([className containsString:@"NowPlaying"]) return @"NowPlaying";
     if ([className containsString:@"Home"] || [className containsString:@"Browse"]) return @"Home";
     if ([className containsString:@"Search"]) return @"Search";
     if ([className containsString:@"Collection"] || [className containsString:@"YourLibrary"] || [className containsString:@"Library"]) return @"Library";
     if ([className containsString:@"Settings"] || [className containsString:@"Preferences"]) return @"Settings";
-    
     return nil;
 }
 
 - (UIView *)findBackgroundContainerInView:(UIView *)view forScreen:(NSString *)screenType {
+    if (!view) return nil;
     return [EeveeThemeFilter findDeepestBackgroundCanvasInView:view screenType:screenType];
 }
-
 @end
 
-#pragma mark - Success pill toast
+#pragma mark - Success Pill Toast
 
 static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
+    if (!title) return;
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+        UIWindow *keyWindow = nil;
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            if (w.isKeyWindow) { keyWindow = w; break; }
+        }
         if (!keyWindow) return;
 
         CGFloat width = keyWindow.bounds.size.width - 40;
@@ -104,7 +104,7 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
         [pill addSubview:titleLabel];
 
         UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(74, 38, width - 90, 22)];
-        subtitleLabel.text = subtitle;
+        subtitleLabel.text = subtitle ? subtitle : @"";
         subtitleLabel.font = [UIFont systemFontOfSize:15];
         subtitleLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.7];
         [pill addSubview:subtitleLabel];
@@ -122,34 +122,17 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     });
 }
 
-#pragma mark - All helper methods (plain category, not inside a hook block)
+#pragma mark - Theme Engine Extensions
 
 @interface UIViewController (EeveeThemeEngine)
-- (void)setupEeveeThemeButton;
-- (void)eevee_openThemeSettings;
-- (void)eevee_handlePan:(UIPanGestureRecognizer *)pan;
-- (void)eevee_handleLongPress:(UILongPressGestureRecognizer *)gesture;
-- (void)eevee_captureCurrentScreenAs:(NSString *)screenName;
-- (void)eevee_dumpView:(UIView *)view depth:(NSInteger)depth intoLog:(NSMutableString *)log;
-- (void)eevee_applyCanvasTheme;
-- (BOOL)eevee_findAndThemeMixingBackground:(UIView *)view theme:(ThemeManager *)tm;
-- (void)eevee_applyWallpaperToContainer:(UIView *)container;
-- (UIView *)eevee_buildWallpaperView;
-- (UIView *)eevee_buildImageWallpaperView:(NSString *)path;
-- (UIView *)eevee_buildGIFWallpaperView:(NSString *)path;
-- (UIView *)eevee_buildVideoWallpaperView:(NSString *)path;
 @end
 
 @implementation UIViewController (EeveeThemeEngine)
 
-#pragma mark Floating button
-
 - (void)setupEeveeThemeButton {
-    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-    if (!keyWindow) {
-        for (UIWindow *w in [UIApplication sharedApplication].windows) {
-            if (w.isKeyWindow) { keyWindow = w; break; }
-        }
+    UIWindow *keyWindow = nil;
+    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+        if (w.isKeyWindow) { keyWindow = w; break; }
     }
     if (!keyWindow) return;
 
@@ -162,8 +145,8 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
         return;
     }
 
-    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
     CGRect bounds = [UIScreen mainScreen].bounds;
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
     btn.frame = CGRectMake(bounds.size.width - 65, bounds.size.height - 180, 50, 50);
     btn.layer.cornerRadius = 25;
     btn.layer.zPosition = CGFLOAT_MAX;
@@ -180,8 +163,8 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(eevee_handlePan:)];
     [btn addGestureRecognizer:pan];
 
-    UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(eevee_handleLongPress:)];
-    [btn addGestureRecognizer:longPress];
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(eevee_handleLongPress:)];
+    [btn addGestureRecognizer:lp];
 
     [keyWindow addSubview:btn];
     gThemeButton = btn;
@@ -195,6 +178,7 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
 
 - (void)eevee_handlePan:(UIPanGestureRecognizer *)pan {
     UIView *btn = pan.view;
+    if (!btn) return;
     CGPoint translation = [pan translationInView:btn.superview];
     CGPoint newCenter = CGPointMake(btn.center.x + translation.x, btn.center.y + translation.y);
     CGRect bounds = [UIScreen mainScreen].bounds;
@@ -204,128 +188,111 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     [pan setTranslation:CGPointZero inView:btn.superview];
 }
 
-#pragma mark Scanner
-
 - (void)eevee_handleLongPress:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan) return;
-
     EeveeDumpSession *session = [EeveeDumpSession shared];
-    UIAlertController *picker = [UIAlertController alertControllerWithTitle:@"Which screen is this?"
-                                                                      message:[NSString stringWithFormat:@"Captured %ld of %ld", (long)session.completedCount, (long)session.totalCount]
-                                                               preferredStyle:UIAlertControllerStyleActionSheet];
+    
+    UIAlertController *picker = [UIAlertController alertControllerWithTitle:@"Scanner"
+        message:[NSString stringWithFormat:@"Captured %ld/%ld", (long)session.completedCount, (long)session.totalCount]
+        preferredStyle:UIAlertControllerStyleActionSheet];
 
-    for (NSString *screenName in session.targetScreens) {
-        BOOL done = [session.completedScreens containsObject:screenName];
-        NSString *label = done ? [NSString stringWithFormat:@"✓ %@ (re-scan)", screenName] : screenName;
+    for (NSString *name in session.targetScreens) {
+        BOOL done = [session.completedScreens containsObject:name];
+        NSString *label = done ? [NSString stringWithFormat:@"✓ %@ (Re-scan)", name] : name;
         [picker addAction:[UIAlertAction actionWithTitle:label style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            [self eevee_captureCurrentScreenAs:screenName];
+            [self eevee_captureCurrentScreenAs:name];
         }]];
     }
 
-    [picker addAction:[UIAlertAction actionWithTitle:@"Reset Scan Progress" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
-        [session reset];
-        EeveeShowSuccessPill(@"Progress reset", @"Start capturing screens again");
+    [picker addAction:[UIAlertAction actionWithTitle:@"Reset All" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [[EeveeDumpSession shared] reset];
+        EeveeShowSuccessPill(@"Reset", @"Progress cleared");
     }]];
     [picker addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
 
-    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-    UIViewController *topVC = keyWindow.rootViewController;
-    while (topVC.presentedViewController) topVC = topVC.presentedViewController;
-
-    if (picker.popoverPresentationController) {
+    if (picker.popoverPresentationController && gThemeButton) {
         picker.popoverPresentationController.sourceView = gThemeButton;
         picker.popoverPresentationController.sourceRect = gThemeButton.bounds;
     }
-    [topVC presentViewController:picker animated:YES completion:nil];
+    [self presentViewController:picker animated:YES completion:nil];
 }
 
 - (void)eevee_captureCurrentScreenAs:(NSString *)screenName {
-    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-    UIViewController *topVC = keyWindow.rootViewController;
-    while (topVC.presentedViewController) topVC = topVC.presentedViewController;
+    UIViewController *top = self;
+    while (top.presentedViewController) top = top.presentedViewController;
+    
+    NSMutableString *log = [NSMutableString stringWithFormat:@"root class: %@\n", NSStringFromClass([top class])];
+    [self eevee_dumpView:top.view depth:0 intoLog:log];
+    [[EeveeDumpSession shared] recordDumpForScreen:screenName hierarchyLog:log];
 
-    NSMutableString *log = [NSMutableString stringWithFormat:@"root class: %@\n", NSStringFromClass([topVC class])];
-    [topVC eevee_dumpView:topVC.view depth:0 intoLog:log];
-
-    EeveeDumpSession *session = [EeveeDumpSession shared];
-    [session recordDumpForScreen:screenName hierarchyLog:log];
-
-    NSInteger done = session.completedCount;
-    NSInteger total = session.totalCount;
-    NSInteger percent = total > 0 ? (done * 100 / total) : 0;
-
-    if (session.isComplete) {
-        EeveeShowSuccessPill(@"All screens captured!", @"eevee_full_scan.txt is ready in Files");
+    if ([EeveeDumpSession shared].isComplete) {
+        EeveeShowSuccessPill(@"Complete", @"eevee_full_scan.txt saved to Files");
     } else {
-        EeveeShowSuccessPill(@"Captured", [NSString stringWithFormat:@"%@ • %ld%% done (%ld/%ld)", screenName, (long)percent, (long)done, (long)total]);
+        EeveeShowSuccessPill(@"Captured", screenName);
     }
 }
 
 - (void)eevee_dumpView:(UIView *)view depth:(NSInteger)depth intoLog:(NSMutableString *)log {
+    if (!view) return;
     NSString *indent = [@"" stringByPaddingToLength:depth * 2 withString:@" " startingAtIndex:0];
-    [log appendFormat:@"%@%@ frame=%@ bg=%@ subviews=%lu\n",
-        indent, NSStringFromClass([view class]), NSStringFromCGRect(view.frame), view.backgroundColor,
-        (unsigned long)view.subviews.count];
+    [log appendFormat:@"%@%@ frame=%@ subviews=%lu\n", 
+        indent, NSStringFromClass([view class]), NSStringFromCGRect(view.frame), (unsigned long)view.subviews.count];
     for (UIView *sub in view.subviews) {
         [self eevee_dumpView:sub depth:depth + 1 intoLog:log];
     }
 }
 
-#pragma mark Canvas theming (Now Playing background)
+#pragma mark Recolor Support
 
-- (void)eevee_applyCanvasTheme {
+- (void)eevee_applyCanvasRecoloring {
     ThemeManager *tm = [ThemeManager shared];
-    if (!tm.isThemeEnabled || tm.activeThemeName.length == 0) return;
+    if (!tm.isThemeEnabled) return;
 
-    NSString *vcName = NSStringFromClass([self class]);
-    if (![vcName containsString:@"NowPlaying"]) return;
-
-    [self eevee_findAndThemeMixingBackground:self.view theme:tm];
+    if ([NSStringFromClass([self class]) containsString:@"NowPlaying"]) {
+        [self eevee_recursiveRecolorMixingBackground:self.view theme:tm];
+    }
 }
 
-- (BOOL)eevee_findAndThemeMixingBackground:(UIView *)view theme:(ThemeManager *)tm {
+- (void)eevee_recursiveRecolorMixingBackground:(UIView *)view theme:(ThemeManager *)tm {
+    if (!view) return;
     if ([NSStringFromClass([view class]) isEqualToString:@"NowPlaying_MixingTransitionImpl.MixingBackgroundView"]) {
         UIColor *bg = [tm colorForKey:@"backgroundColor" fallback:nil];
         if (bg) {
             for (UIView *sub in view.subviews) {
-                if ([sub isMemberOfClass:[UIView class]]) {
-                    sub.backgroundColor = bg;
-                }
+                if ([sub isMemberOfClass:[UIView class]]) sub.backgroundColor = bg;
             }
         }
-        return YES;
+        return;
     }
     for (UIView *sub in view.subviews) {
-        if ([self eevee_findAndThemeMixingBackground:sub theme:tm]) return YES;
+        [self eevee_recursiveRecolorMixingBackground:sub theme:tm];
     }
-    return NO;
 }
 
-#pragma mark Wallpaper (with Auto Layout constraints)
+#pragma mark Wallpaper Support
 
 - (void)eevee_applyWallpaperToContainer:(UIView *)container {
+    if (!container) return;
     ThemeManager *tm = [ThemeManager shared];
+    
+    UIView *existing = [container viewWithTag:kEeveeWallpaperViewTag];
     if (![tm hasWallpaper]) {
-        UIView *existing = [container viewWithTag:kEeveeWallpaperViewTag];
-        [existing removeFromSuperview];
+        if (existing) [existing removeFromSuperview];
         return;
     }
 
-    UIView *existing = [container viewWithTag:kEeveeWallpaperViewTag];
     if (existing) return;
 
-    UIView *wallpaperView = [self eevee_buildWallpaperView];
-    if (wallpaperView) {
-        wallpaperView.tag = kEeveeWallpaperViewTag;
-        wallpaperView.translatesAutoresizingMaskIntoConstraints = NO;
-        [container insertSubview:wallpaperView atIndex:0];
-
-        // Auto Layout constraint pinning (leading, trailing, top, bottom)
+    UIView *wp = [self eevee_buildWallpaperView];
+    if (wp) {
+        wp.tag = kEeveeWallpaperViewTag;
+        wp.translatesAutoresizingMaskIntoConstraints = NO;
+        [container insertSubview:wp atIndex:0];
         [NSLayoutConstraint activateConstraints:@[
-            [wallpaperView.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
-            [wallpaperView.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
-            [wallpaperView.topAnchor constraintEqualToAnchor:container.topAnchor],
-            [wallpaperView.bottomAnchor constraintEqualToAnchor:container.bottomAnchor]
+            [wp.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+            [wp.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
+            [wp.topAnchor constraintEqualToAnchor:container.topAnchor],
+            [wp.bottomAnchor constraintEqualToAnchor:container.bottomAnchor]
         ]];
     }
 }
@@ -336,14 +303,14 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     if (!path) return nil;
 
     switch ([tm currentWallpaperType]) {
-        case EeveeWallpaperTypeImage: return [self eevee_buildImageWallpaperView:path];
-        case EeveeWallpaperTypeGIF:   return [self eevee_buildGIFWallpaperView:path];
-        case EeveeWallpaperTypeVideo: return [self eevee_buildVideoWallpaperView:path];
+        case EeveeWallpaperTypeImage: return [self eevee_buildImageWP:path];
+        case EeveeWallpaperTypeGIF:   return [self eevee_buildGIFWP:path];
+        case EeveeWallpaperTypeVideo: return [self eevee_buildVideoWP:path];
         default: return nil;
     }
 }
 
-- (UIView *)eevee_buildImageWallpaperView:(NSString *)path {
+- (UIView *)eevee_buildImageWP:(NSString *)path {
     UIImage *img = [UIImage imageWithContentsOfFile:path];
     if (!img) return nil;
     UIImageView *iv = [[UIImageView alloc] initWithImage:img];
@@ -352,61 +319,50 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     return iv;
 }
 
-- (UIView *)eevee_buildGIFWallpaperView:(NSString *)path {
+- (UIView *)eevee_buildGIFWP:(NSString *)path {
     NSData *data = [NSData dataWithContentsOfFile:path];
     if (!data) return nil;
 
-    // Prefer FLAnimatedImage for efficient GIF playback if it's linked into the binary
-    Class FLAnimatedImageClass = NSClassFromString(@"FLAnimatedImage");
-    Class FLAnimatedImageViewClass = NSClassFromString(@"FLAnimatedImageView");
-    if (FLAnimatedImageClass && FLAnimatedImageViewClass) {
-    // Try using the correct initializer: initWithAnimatedGIFData: or falling back to init
-    id animated = nil;
-    if ([FLAnimatedImageClass respondsToSelector:@selector(animatedImageWithGIFData:)]) {
-        animated = [FLAnimatedImageClass performSelector:@selector(animatedImageWithGIFData:) withObject:data];
-    } else if ([FLAnimatedImageClass instancesRespondToSelector:@selector(initWithAnimatedGIFData:)]) {
-        animated = [[FLAnimatedImageClass alloc] initWithAnimatedGIFData:data];
-    }
-    
-    if (animated) {
-        id iv = [[FLAnimatedImageViewClass alloc] init];
-        [iv setValue:animated forKey:@"animatedImage"];
-        UIView *view = (UIView *)iv;
-        view.contentMode = UIViewContentModeScaleAspectFill;
-        view.clipsToBounds = YES;
-        return view;
-    }
-}
-
-    // Fallback: decode frames using ImageIO (compatibility mode)
-    CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
-    if (!source) return nil;
-    size_t count = CGImageSourceGetCount(source);
-    NSMutableArray *images = [NSMutableArray array];
-    for (size_t i = 0; i < count; i++) {
-        CGImageRef cgImage = CGImageSourceCreateImageAtIndex(source, i, NULL);
-        if (cgImage) {
-            [images addObject:[UIImage imageWithCGImage:cgImage]];
-            CGImageRelease(cgImage);
+    Class fImg = NSClassFromString(@"FLAnimatedImage");
+    Class fView = NSClassFromString(@"FLAnimatedImageView");
+    if (fImg && fView) {
+        id anim = nil;
+        if ([fImg respondsToSelector:@selector(animatedImageWithGIFData:)]) {
+            anim = [fImg performSelector:@selector(animatedImageWithGIFData:) withObject:data];
+        } else {
+            anim = [[fImg alloc] initWithAnimatedGIFData:data];
+        }
+        if (anim) {
+            UIView *iv = [[fView alloc] init];
+            [iv setValue:anim forKey:@"animatedImage"];
+            iv.contentMode = UIViewContentModeScaleAspectFill;
+            iv.clipsToBounds = YES;
+            return iv;
         }
     }
-    CFRelease(source);
-    if (images.count == 0) return nil;
 
+    CGImageSourceRef src = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
+    if (!src) return nil;
+    size_t count = CGImageSourceGetCount(src);
+    NSMutableArray *frames = [NSMutableArray array];
+    for (size_t i = 0; i < count; i++) {
+        CGImageRef cg = CGImageSourceCreateImageAtIndex(src, i, NULL);
+        if (cg) { [frames addObject:[UIImage imageWithCGImage:cg]]; CGImageRelease(cg); }
+    }
+    CFRelease(src);
+    
     UIImageView *iv = [[UIImageView alloc] init];
-    iv.animationImages = images;
-    iv.animationDuration = MAX(0.1 * images.count, 0.2);
+    iv.animationImages = frames;
+    iv.animationDuration = MAX(0.1 * frames.count, 0.5);
     iv.contentMode = UIViewContentModeScaleAspectFill;
     iv.clipsToBounds = YES;
     [iv startAnimating];
     return iv;
 }
 
-- (UIView *)eevee_buildVideoWallpaperView:(NSString *)path {
+- (UIView *)eevee_buildVideoWP:(NSString *)path {
     NSURL *url = [NSURL fileURLWithPath:path];
     AVPlayerItem *item = [AVPlayerItem playerItemWithURL:url];
-
-    // Use AVQueuePlayer so we can optionally use AVPlayerLooper for gapless playback
     AVQueuePlayer *player = [[AVQueuePlayer alloc] initWithPlayerItem:item];
     player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
     player.muted = YES;
@@ -415,42 +371,21 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
     view.playerLayer.player = player;
     view.playerLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
 
-    // Register for end-of-playback on the specific item (more reliable than observing player.currentItem)
-    __weak AVQueuePlayer *weakPlayer = player;
-    id endObserver = [[NSNotificationCenter defaultCenter] addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
-                                                                         object:item
-                                                                          queue:[NSOperationQueue mainQueue]
-                                                                     usingBlock:^(NSNotification *note) {
-        AVQueuePlayer *p = weakPlayer;
-        if (!p) return;
-        [p seekToTime:kCMTimeZero toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero completionHandler:^(BOOL finished) {
-            [p play];
-        }];
+    __weak AVQueuePlayer *wp = player;
+    id obs = [[NSNotificationCenter defaultCenter] addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
+                                                               object:item
+                                                                queue:[NSOperationQueue mainQueue]
+                                                           usingBlock:^(NSNotification *n) {
+        [wp seekToTime:kCMTimeZero toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero completionHandler:^(BOOL f) { [wp play]; }];
     }];
-
-    // Store observer on the view so it can be removed when the view is deallocated
-    if ([view respondsToSelector:@selector(setValue:forKey:)]) {
-        [view setValue:endObserver forKey:@"eevee_endObserver"];
-    }
-
+    view.eevee_endObserver = obs;
     [player play];
     return view;
 }
 
 @end
 
-#pragma mark - Global refresh
-
-static void RefreshAppUI(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        for (UIWindow *window in [UIApplication sharedApplication].windows) {
-            [window setNeedsLayout];
-            [window layoutIfNeeded];
-        }
-    });
-}
-
-#pragma mark - Hooks (universal viewDidAppear and viewDidLayoutSubviews)
+#pragma mark - Universal Hooks
 
 %hook UIViewController
 
@@ -459,45 +394,46 @@ static void RefreshAppUI(void) {
     [self setupEeveeThemeButton];
 }
 
-%end
-
-%hook UIViewController
-
 - (void)viewDidLayoutSubviews {
     %orig;
 
     ThemeManager *tm = [ThemeManager shared];
-    if (!tm.isThemeEnabled || tm.activeThemeName.length == 0) return;
+    if (!tm.isThemeEnabled) return;
 
-    EeveeScreenRegistry *registry = [EeveeScreenRegistry shared];
-    NSString *screenType = [registry identifyScreenContext:self];
-
+    NSString *screenType = [[EeveeScreenRegistry shared] identifyScreenContext:self];
     if (!screenType) return;
 
-    // Apply wallpaper to background container (ALL screens)
-    UIView *bgContainer = [registry findBackgroundContainerInView:self.view forScreen:screenType];
-    if (bgContainer) {
-        [self eevee_applyWallpaperToContainer:bgContainer];
-    }
+    // 1. Wallpaper injection
+    UIView *bg = [[EeveeScreenRegistry shared] findBackgroundContainerInView:self.view forScreen:screenType];
+    if (bg) [self eevee_applyWallpaperToContainer:bg];
 
-    // Apply canvas recoloring (NowPlaying only—has MixingBackgroundView)
+    // 2. Now Playing recoloring
     if ([screenType isEqualToString:@"NowPlaying"]) {
-        [self eevee_applyCanvasTheme];
+        [self eevee_applyCanvasRecoloring];
     }
 
-    // Apply font colors globally (all screens, max depth 20)
-    UIColor *textColor = [tm colorForKey:@"textColor" fallback:nil];
-    if (textColor) {
-        [EeveeThemeFilter recursivelyApplyFontColor:textColor
-                                             toView:self.view
-                                skippingCardOrCellSurfaces:YES
-                                                   depth:20];
+    // 3. Global Text Recoloring (Optimized)
+    UIColor *txt = [tm colorForKey:@"textColor" fallback:nil];
+    if (txt) {
+        [EeveeThemeFilter recursivelyApplyFontColor:txt 
+                                             toView:self.view 
+                         skippingCardOrCellSurfaces:YES 
+                                              depth:20];
     }
 }
 
 %end
 
-#pragma mark - Ctor
+#pragma mark - Global UI Refresh
+
+static void EeveeRefreshAll(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (UIWindow *window in [UIApplication sharedApplication].windows) {
+            [window setNeedsLayout];
+            [window layoutIfNeeded];
+        }
+    });
+}
 
 %ctor {
     %init;
@@ -505,6 +441,6 @@ static void RefreshAppUI(void) {
                                                        object:nil
                                                         queue:[NSOperationQueue mainQueue]
                                                    usingBlock:^(NSNotification *note) {
-        RefreshAppUI();
+        EeveeRefreshAll();
     }];
 }
