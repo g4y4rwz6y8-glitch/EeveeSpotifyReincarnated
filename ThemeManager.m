@@ -1,4 +1,3 @@
----
 *** Begin Patch
 *** Update File: ThemeManager.m
 @@
