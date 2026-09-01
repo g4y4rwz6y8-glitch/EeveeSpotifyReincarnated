@@ -125,6 +125,19 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
 #pragma mark - Theme Engine Extensions
 
 @interface UIViewController (EeveeThemeEngine)
+- (void)setupEeveeThemeButton;
+- (void)eevee_openThemeSettings;
+- (void)eevee_handlePan:(UIPanGestureRecognizer *)pan;
+- (void)eevee_handleLongPress:(UILongPressGestureRecognizer *)gesture;
+- (void)eevee_captureCurrentScreenAs:(NSString *)screenName;
+- (void)eevee_dumpView:(UIView *)view depth:(NSInteger)depth intoLog:(NSMutableString *)log;
+- (void)eevee_applyCanvasRecoloring;
+- (void)eevee_recursiveRecolorMixingBackground:(UIView *)view theme:(ThemeManager *)tm;
+- (void)eevee_applyWallpaperToContainer:(UIView *)container;
+- (UIView *)eevee_buildWallpaperView;
+- (UIView *)eevee_buildImageWP:(NSString *)path;
+- (UIView *)eevee_buildGIFWP:(NSString *)path;
+- (UIView *)eevee_buildVideoWP:(NSString *)path;
 @end
 
 @implementation UIViewController (EeveeThemeEngine)
@@ -347,25 +360,6 @@ static void EeveeShowSuccessPill(NSString *title, NSString *subtitle) {
             return iv;
         }
     }
-
-    CGImageSourceRef src = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
-    if (!src) return nil;
-    size_t count = CGImageSourceGetCount(src);
-    NSMutableArray *frames = [NSMutableArray array];
-    for (size_t i = 0; i < count; i++) {
-        CGImageRef cg = CGImageSourceCreateImageAtIndex(src, i, NULL);
-        if (cg) { [frames addObject:[UIImage imageWithCGImage:cg]]; CGImageRelease(cg); }
-    }
-    CFRelease(src);
-    
-    UIImageView *iv = [[UIImageView alloc] init];
-    iv.animationImages = frames;
-    iv.animationDuration = MAX(0.1 * frames.count, 0.5);
-    iv.contentMode = UIViewContentModeScaleAspectFill;
-    iv.clipsToBounds = YES;
-    [iv startAnimating];
-    return iv;
-}
 
     CGImageSourceRef src = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
     if (!src) return nil;
