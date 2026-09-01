@@ -2,6 +2,68 @@
 
 @implementation ThemeManager
 
++ (instancetype)shared {
+    static ThemeManager *sharedInstance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        sharedInstance = [[self alloc] init];
+    });
+    return sharedInstance;
+}
+
+- (NSURL *)documentsDirectory {
+    return [[[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask] lastObject];
+}
+
+- (NSURL *)wallpaperURLForType:(EeveeWallpaperType)type {
+    NSString *ext = (type == EeveeWallpaperTypeVideo) ? @"mp4" : @"png";
+    return [[self documentsDirectory] URLByAppendingPathComponent:[NSString stringWithFormat:@"eevee_wallpaper.%@", ext]];
+}
+
+- (NSArray<NSString *> *)allSavedThemes {
+    // Return saved themes logic
+    return @[];
+}
+
+- (void)saveTheme:(NSDictionary *)dict name:(NSString *)name {
+    // Save theme logic
+}
+
+- (void)setActiveTheme:(NSString *)name {
+    // Set active theme logic
+}
+
+- (void)deleteTheme:(NSString *)name {
+    // Delete theme logic
+}
+
+- (UIColor *)colorForKey:(NSString *)key fallback:(nullable UIColor *)fallback {
+    // Color for key logic
+    return fallback;
+}
+
+- (BOOL)hasWallpaper {
+    return [self wallpaperFilePath] != nil;
+}
+
+- (nullable NSString *)wallpaperFilePath {
+    for (NSInteger t = EeveeWallpaperTypeImage; t <= EeveeWallpaperTypeVideo; t++) {
+        NSURL *url = [self wallpaperURLForType:t];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
+            return url.path;
+        }
+    }
+    return nil;
+}
+
+- (EeveeWallpaperType)currentWallpaperType {
+    NSURL *videoURL = [self wallpaperURLForType:EeveeWallpaperTypeVideo];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:videoURL.path]) {
+        return EeveeWallpaperTypeVideo;
+    }
+    return EeveeWallpaperTypeImage;
+}
+
 - (BOOL)saveWallpaperFromURL:(NSURL *)sourceURL type:(EeveeWallpaperType)type error:(NSError * _Nullable * _Nullable)error {
     // Clear any wallpaper of a different type first so only one is ever active
     for (NSInteger t = EeveeWallpaperTypeImage; t <= EeveeWallpaperTypeVideo; t++) {
@@ -36,6 +98,12 @@
     }
 
     return YES;
+}
+
+- (void)clearWallpaper {
+    for (NSInteger t = EeveeWallpaperTypeImage; t <= EeveeWallpaperTypeVideo; t++) {
+        [[NSFileManager defaultManager] removeItemAtURL:[self wallpaperURLForType:t] error:nil];
+    }
 }
 
 @end
