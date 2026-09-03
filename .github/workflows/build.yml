@@ -30,7 +30,7 @@ jobs:
         if: failure()
         run: |
           ERROR_LOG=$(cat build.log | tail -n 100 | jq -sR .)
-          curl -X POST "https://YOUR-REPLIT-APP-NAME.replit.dev/webhook/build-failed" \
+          curl -X POST "https://rw4s.riker.replit.dev/api/repair-intake" \
             -H "Content-Type: application/json" \
             -d "{
                   \"repo\": \"${{ github.repository }}\",
