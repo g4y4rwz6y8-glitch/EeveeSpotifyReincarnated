@@ -2,7 +2,9 @@ name: Build Dylib
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
   workflow_dispatch:
 
 jobs:
@@ -10,35 +12,29 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - name: Checkout repo
+      - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Install Theos
-        run: |
-          git clone --recursive https://github.com/theos/theos.git $HOME/theos
-          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-
-      - name: Install Theos SDK (iphoneos)
-        run: |
-          mkdir -p $THEOS/sdks
-          curl -LO https://github.com/theos/sdks/archive/master.zip
-          unzip master.zip
-          mv sdks-master/iPhoneOS14.5.sdk $THEOS/sdks/
-          rm -rf sdks-master master.zip
-
-      - name: Install ldid
-        run: brew install ldid
-
-      - name: Build tweak package
-        run: make package FINALPACKAGE=1
-
-      - name: Extract dylib
-        run: |
-          mkdir -p extracted
-          find .theos/ -name "*.dylib" -exec cp {} extracted/ \;
-
-      - name: Upload dylib artifact
-        uses: actions/upload-artifact@v4
         with:
-          name: EeveeThemeEngine-dylib
-          path: extracted/*.dylib
+          submodules: recursive
+
+      - name: Setup Theos
+        run: |
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          echo "THEOS=/Users/runner/theos" >> $GITHUB_ENV
+
+      - name: Build Package
+        run: |
+          make package FINALPACKAGE=1 2>&1 | tee build.log
+
+      - name: Trigger Replit Auto-Fixer on Failure
+        if: failure()
+        run: |
+          ERROR_LOG=$(cat build.log | tail -n 100 | jq -sR .)
+          curl -X POST "https://YOUR-REPLIT-APP-NAME.replit.dev/webhook/build-failed" \
+            -H "Content-Type: application/json" \
+            -d "{
+                  \"repo\": \"${{ github.repository }}\",
+                  \"branch\": \"${{ github.ref_name }}\",
+                  \"commit_sha\": \"${{ github.sha }}\",
+                  \"error_log\": $ERROR_LOG
+                }"
