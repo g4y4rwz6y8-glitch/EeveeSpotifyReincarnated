@@ -15,8 +15,7 @@ static BOOL SPTIsNearBlackOpaqueFill(UIColor *color) {
 }
 
 // Any view that is, or is nested inside, our own settings UI is exempt
-// from the clearing pass — walks up the responder chain looking for our
-// marker class by name (avoids a hard header dependency from Tweak.x).
+// from the clearing pass.
 static BOOL SPTViewBelongsToOwnUI(UIView *view) {
     UIView *v = view;
     while (v) {
@@ -83,9 +82,6 @@ static BOOL SPTViewBelongsToOwnUI(UIView *view) {
     }
 }
 
-// Layout can re-trigger Spotify's own theming code which re-applies a
-// solid fill after the initial clear (common with Encore views that
-// re-read a design-token color on every layout pass). Re-clear here too.
 - (void)layoutSubviews {
     %orig;
     if (SPTIsThemeEnabled() && self.window &&
@@ -98,61 +94,16 @@ static BOOL SPTViewBelongsToOwnUI(UIView *view) {
 
 %end
 
-// Best-effort hooks on named Spotify controllers. If a class doesn't
-// exist in this build, Logos silently no-ops the hook rather than
-// crashing — safe to keep even across Spotify versions where these
-// classes may be renamed or absent.
-
-%hook SPTNavigationController
+// Generic UIViewController hook to transparently expose view backgrounds safely
+%hook UIViewController
 
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    if (SPTIsThemeEnabled() && !SPTViewBelongsToOwnUI(self.view)) {
-        self.view.backgroundColor = [UIColor clearColor];
+    if (SPTIsThemeEnabled() && self.view && !SPTViewBelongsToOwnUI(self.view)) {
+        if (SPTIsNearBlackOpaqueFill(self.view.backgroundColor)) {
+            self.view.backgroundColor = [UIColor clearColor];
+        }
     }
-}
-
-%end
-
-%hook SPTHomeViewController
-
-- (void)viewWillAppear:(BOOL)animated {
-    %orig;
-    if (SPTIsThemeEnabled() && !SPTViewBelongsToOwnUI(self.view)) {
-        self.view.backgroundColor = [UIColor clearColor];
-    }
-}
-
-- (void)viewDidLayoutSubviews {
-    %orig;
-    if (SPTIsThemeEnabled() && !SPTViewBelongsToOwnUI(self.view)) {
-        self.view.backgroundColor = [UIColor clearColor];
-    }
-}
-
-%end
-
-%hook SPTMainViewController
-
-- (void)viewWillAppear:(BOOL)animated {
-    %orig;
-    if (SPTIsThemeEnabled() && !SPTViewBelongsToOwnUI(self.view)) {
-        self.view.backgroundColor = [UIColor clearColor];
-    }
-}
-
-%end
-
-%hook SPTNowPlayingViewController
-
-- (void)viewWillAppear:(BOOL)animated {
-    %orig;
-    // Now Playing intentionally stays opaque by default — most users want
-    // album art/blur here, not the raw wallpaper. Leave commented unless
-    // you specifically want the wallpaper behind Now Playing too:
-    // if (SPTIsThemeEnabled() && !SPTViewBelongsToOwnUI(self.view)) {
-    //     self.view.backgroundColor = [UIColor clearColor];
-    // }
 }
 
 %end
