@@ -25,6 +25,8 @@
     [self syncUIWithManagerState];
 }
 
+#pragma mark - UI Construction
+
 - (void)buildUI {
     UIBarButtonItem *doneButton = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
                                                                                   target:self
@@ -87,6 +89,8 @@
     return row;
 }
 
+#pragma mark - State Sync
+
 - (void)syncUIWithManagerState {
     SPTCustomThemeManager *manager = [SPTCustomThemeManager sharedManager];
     self.enabledSwitch.on = manager.themeEnabled;
@@ -108,6 +112,8 @@
         [view drawViewHierarchyInRect:view.bounds afterScreenUpdates:NO];
     }];
 }
+
+#pragma mark - Actions
 
 - (void)dismissTapped {
     [self dismissViewControllerAnimated:YES completion:nil];
@@ -153,7 +159,7 @@
 
 - (void)presentDocumentPickerForVideo {
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
-        initForOpeningContentTypes:@[UTTypeMovie, UTTypeMPEG4]];
+        initForOpeningContentTypes:@[UTTypeMovie, UTTypeMPEG4Movie]];
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
     [self presentViewController:picker animated:YES completion:nil];
@@ -163,6 +169,8 @@
     [[SPTCustomThemeManager sharedManager] resetWallpaper];
     self.previewImageView.image = nil;
 }
+
+#pragma mark - PHPickerViewControllerDelegate
 
 - (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
     [picker dismissViewControllerAnimated:YES completion:nil];
@@ -194,14 +202,19 @@
     }];
 }
 
+#pragma mark - UIDocumentPickerDelegate
+
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     if (urls.count == 0) return;
     NSURL *sourceURL = urls.firstObject;
 
     BOOL didStartAccessing = [sourceURL startAccessingSecurityScopedResource];
-    NSURL *tempURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:
-        [NSUUID UUID].UUIDString stringByAppendingPathExtension:@"mp4"]];
-    NSError *error;
+    
+    NSString *filename = [[NSUUID UUID].UUIDString stringByAppendingPathExtension:@"mp4"];
+    NSString *tempPath = [NSTemporaryDirectory() stringByAppendingPathComponent:filename];
+    NSURL *tempURL = [NSURL fileURLWithPath:tempPath];
+    
+    NSError *error = nil;
     [[NSFileManager defaultManager] copyItemAtURL:sourceURL toURL:tempURL error:&error];
     if (didStartAccessing) {
         [sourceURL stopAccessingSecurityScopedResource];
