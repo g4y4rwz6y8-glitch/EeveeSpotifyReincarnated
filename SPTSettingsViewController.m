@@ -3,8 +3,6 @@
 #import <PhotosUI/PhotosUI.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-// Marker subclass — the generic transparency hook in Tweak.x explicitly
-// skips this class so our own settings card never gets cleared.
 @interface SPTOpaqueContainerView : UIView
 @end
 @implementation SPTOpaqueContainerView
@@ -27,7 +25,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"Custom Theme";
-    self.view.backgroundColor = [UIColor clearColor]; // let the blur card be the only opaque layer
+    self.view.backgroundColor = [UIColor clearColor];
 
     [self buildUI];
     [self syncUIWithManagerState];
@@ -41,9 +39,6 @@
                                                                                   action:@selector(dismissTapped)];
     self.navigationItem.rightBarButtonItem = doneButton;
 
-    // Opaque-ish blurred card sitting behind every control — this is what
-    // fixes legibility over bright/animated wallpapers. Uses our marker
-    // subclass so the generic clearing hook leaves it alone.
     SPTOpaqueContainerView *card = [[SPTOpaqueContainerView alloc] init];
     card.translatesAutoresizingMaskIntoConstraints = NO;
     card.layer.cornerRadius = 20;
@@ -55,6 +50,7 @@
     self.cardBackgroundView = [[UIVisualEffectView alloc] initWithEffect:blur];
     self.cardBackgroundView.translatesAutoresizingMaskIntoConstraints = NO;
     [card addSubview:self.cardBackgroundView];
+    
     [NSLayoutConstraint activateConstraints:@[
         [self.cardBackgroundView.topAnchor constraintEqualToAnchor:card.topAnchor],
         [self.cardBackgroundView.bottomAnchor constraintEqualToAnchor:card.bottomAnchor],
@@ -234,9 +230,6 @@
     NSString *movieType = (NSString *)UTTypeMovie.identifier;
     if (![provider hasItemConformingToTypeIdentifier:movieType]) return;
 
-    // In-place file representation avoids a full extra copy into memory —
-    // the system hands us a temp path directly; we just need to relocate
-    // it to a location that outlives the completion handler's cleanup.
     [provider loadInPlaceFileRepresentationForTypeIdentifier:movieType completionHandler:
         ^(NSURL *fileURL, BOOL isInPlace, NSError *error) {
         if (!fileURL) return;
