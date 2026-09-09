@@ -2,6 +2,8 @@
 #import "SPTSettingsViewController.h"
 
 @interface SPTFloatingActionButton () <UIGestureRecognizerDelegate>
+@property (nonatomic, weak) UIWindow *installedWindow;
+@property (nonatomic, strong) NSArray<NSLayoutConstraint *> *positionConstraints;
 @end
 
 @implementation SPTFloatingActionButton
@@ -25,7 +27,6 @@
     self.layer.shadowRadius = 4;
     self.translatesAutoresizingMaskIntoConstraints = NO;
 
-    // Suppress deprecated warnings for legacy highlighted toggle
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     self.adjustsImageWhenHighlighted = NO;
@@ -51,24 +52,53 @@
     self.transform = CGAffineTransformIdentity;
 }
 
+#pragma mark - Window eligibility
+
+// This is the actual fix for Issue B: only ever install into the real
+// app content window, never a system overlay/keyboard/effects window.
++ (BOOL)isEligibleContentWindow:(UIWindow *)window {
+    if (!window) return NO;
+    if (window.windowLevel != UIWindowLevelNormal) return NO;       // excludes keyboard/alert/status windows
+    if (!window.rootViewController) return NO;                     // system windows rarely have one
+    if (CGRectIsEmpty(window.bounds)) return NO;
+    if (window.bounds.size.width < 100 || window.bounds.size.height < 100) return NO; // guards tiny overlay windows
+
+    NSString *className = NSStringFromClass(window.class);
+    if ([className containsString:@"UIRemoteKeyboardWindow"]) return NO;
+    if ([className containsString:@"UITextEffectsWindow"]) return NO;
+
+    return YES;
+}
+
 - (void)installInWindow:(UIWindow *)window {
-    if (!window) return;
-    
-    if (self.superview != window) {
-        [self removeFromSuperview];
-        [window addSubview:self];
+    if (![SPTFloatingActionButton isEligibleContentWindow:window]) return;
+
+    // Already correctly parented — just make sure we're on top, don't
+    // touch constraints (this is what stopped the repeated re-parenting
+    // that was causing the top-left jumps under layoutSubviews churn).
+    if (self.installedWindow == window && self.superview == window) {
+        [window bringSubviewToFront:self];
+        return;
     }
-    
+
+    if (self.positionConstraints.count > 0) {
+        [NSLayoutConstraint deactivateConstraints:self.positionConstraints];
+        self.positionConstraints = nil;
+    }
+
+    [self removeFromSuperview];
+    [window addSubview:self];
     [window bringSubviewToFront:self];
 
-    if (self.constraints.count == 0 || self.superview != window) {
-        [NSLayoutConstraint activateConstraints:@[
-            [self.widthAnchor constraintEqualToConstant:52],
-            [self.heightAnchor constraintEqualToConstant:52],
-            [self.trailingAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.trailingAnchor constant:-16],
-            [self.bottomAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.bottomAnchor constant:-140],
-        ]];
-    }
+    NSLayoutConstraint *trailing = [self.trailingAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.trailingAnchor constant:-16];
+    NSLayoutConstraint *bottom = [self.bottomAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.bottomAnchor constant:-140];
+    NSLayoutConstraint *width = [self.widthAnchor constraintEqualToConstant:52];
+    NSLayoutConstraint *height = [self.heightAnchor constraintEqualToConstant:52];
+
+    self.positionConstraints = @[trailing, bottom, width, height];
+    [NSLayoutConstraint activateConstraints:self.positionConstraints];
+
+    self.installedWindow = window;
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
@@ -88,7 +118,7 @@
     [topVC presentViewController:settingsVC animated:YES completion:nil];
 }
 
-#pragma mark - Long press: Multi-Page Hierarchy Inspector
+#pragma mark - Long press: hierarchy inspector
 
 - (void)handleLongPress:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan) return;
@@ -132,7 +162,7 @@
     [output appendFormat:@"Dump Section: %@\n", pageName];
     [output appendFormat:@"Root VC: %@\n", NSStringFromClass(targetVC.class)];
     [output appendFormat:@"Timestamp: %@\n\n", [NSDate date]];
-    
+
     [self appendDescriptionOfView:targetVC.view depth:0 into:output];
 
     NSString *fileName = [NSString stringWithFormat:@"spt_hierarchy_%@_%.0f.txt", pageName, [NSDate date].timeIntervalSince1970];
@@ -152,21 +182,13 @@
 
 - (void)appendDescriptionOfView:(UIView *)view depth:(NSInteger)depth into:(NSMutableString *)output {
     if (!view) return;
-    
-    NSString *indent = [@"" stringByPaddingToLength:depth * 2 withString:@" " startingAtIndex:0];
 
-    NSString *bgDescription = view.backgroundColor
-        ? [self hexStringForColor:view.backgroundColor]
-        : @"nil";
+    NSString *indent = [@"" stringByPaddingToLength:depth * 2 withString:@" " startingAtIndex:0];
+    NSString *bgDescription = view.backgroundColor ? [self hexStringForColor:view.backgroundColor] : @"nil";
 
     [output appendFormat:@"%@%@ frame=%@ bg=%@ alpha=%.2f hidden=%d subviews=%lu\n",
-        indent,
-        NSStringFromClass(view.class),
-        NSStringFromCGRect(view.frame),
-        bgDescription,
-        view.alpha,
-        view.hidden,
-        (unsigned long)view.subviews.count];
+        indent, NSStringFromClass(view.class), NSStringFromCGRect(view.frame),
+        bgDescription, view.alpha, view.hidden, (unsigned long)view.subviews.count];
 
     for (UIView *subview in view.subviews) {
         [self appendDescriptionOfView:subview depth:depth + 1 into:output];
@@ -176,8 +198,7 @@
 - (NSString *)hexStringForColor:(UIColor *)color {
     CGFloat r = 0, g = 0, b = 0, a = 0;
     if ([color getRed:&r green:&g blue:&b alpha:&a]) {
-        return [NSString stringWithFormat:@"#%02lX%02lX%02lX a=%.2f",
-            (long)(r * 255), (long)(g * 255), (long)(b * 255), a];
+        return [NSString stringWithFormat:@"#%02lX%02lX%02lX a=%.2f", (long)(r * 255), (long)(g * 255), (long)(b * 255), a];
     }
     CGFloat white = 0;
     if ([color getWhite:&white alpha:&a]) {
@@ -194,7 +215,7 @@
                 [scene isKindOfClass:[UIWindowScene class]]) {
                 UIWindowScene *windowScene = (UIWindowScene *)scene;
                 for (UIWindow *w in windowScene.windows) {
-                    if (w.isKeyWindow) {
+                    if (w.isKeyWindow && [SPTFloatingActionButton isEligibleContentWindow:w]) {
                         window = w;
                         break;
                     }
