@@ -14,14 +14,19 @@ static BOOL SPTIsNearBlackOpaqueFill(UIColor *color) {
     return NO;
 }
 
-// Any view that is, or is nested inside, our own settings UI is exempt
-// from the clearing pass.
-static BOOL SPTViewBelongsToOwnUI(UIView *view) {
+// Exempt floating action button, settings cards, search input fields, and text controls
+static BOOL SPTViewBelongsToOwnOrInteractiveUI(UIView *view) {
     UIView *v = view;
     while (v) {
+        NSString *className = NSStringFromClass(v.class);
         if ([v isKindOfClass:NSClassFromString(@"SPTOpaqueContainerView")] ||
             [v isKindOfClass:NSClassFromString(@"SPTSettingsViewController")] ||
-            [v isKindOfClass:[UIVisualEffectView class]]) {
+            [v isKindOfClass:[SPTFloatingActionButton class]] ||
+            [v isKindOfClass:[UIVisualEffectView class]] ||
+            [v isKindOfClass:[UISearchBar class]] ||
+            [v isKindOfClass:[UITextField class]] ||
+            [className containsString:@"TouchForwardingView"] ||
+            [className containsString:@"Search"]) {
             return YES;
         }
         v = v.superview;
@@ -43,13 +48,21 @@ static BOOL SPTViewBelongsToOwnUI(UIView *view) {
     [[SPTFloatingActionButton sharedButton] installInWindow:self];
 }
 
+- (void)layoutSubviews {
+    %orig;
+    // Always keep floating button visible and brought to front
+    if (SPTIsThemeEnabled()) {
+        [[SPTFloatingActionButton sharedButton] installInWindow:self];
+    }
+}
+
 %end
 
 %hook UICollectionView
 
 - (void)didMoveToWindow {
     %orig;
-    if (SPTIsThemeEnabled() && self.window && !SPTViewBelongsToOwnUI(self) &&
+    if (SPTIsThemeEnabled() && self.window && !SPTViewBelongsToOwnOrInteractiveUI(self) &&
         SPTIsNearBlackOpaqueFill(self.backgroundColor)) {
         self.backgroundColor = [UIColor clearColor];
     }
@@ -61,7 +74,7 @@ static BOOL SPTViewBelongsToOwnUI(UIView *view) {
 
 - (void)didMoveToWindow {
     %orig;
-    if (SPTIsThemeEnabled() && self.window && !SPTViewBelongsToOwnUI(self) &&
+    if (SPTIsThemeEnabled() && self.window && !SPTViewBelongsToOwnOrInteractiveUI(self) &&
         SPTIsNearBlackOpaqueFill(self.backgroundColor)) {
         self.backgroundColor = [UIColor clearColor];
         self.backgroundView = nil;
@@ -76,7 +89,7 @@ static BOOL SPTViewBelongsToOwnUI(UIView *view) {
     %orig;
     if (SPTIsThemeEnabled() && self.window &&
         self.subviews.count <= 1 &&
-        !SPTViewBelongsToOwnUI(self) &&
+        !SPTViewBelongsToOwnOrInteractiveUI(self) &&
         SPTIsNearBlackOpaqueFill(self.backgroundColor)) {
         self.backgroundColor = [UIColor clearColor];
     }
@@ -86,7 +99,7 @@ static BOOL SPTViewBelongsToOwnUI(UIView *view) {
     %orig;
     if (SPTIsThemeEnabled() && self.window &&
         self.subviews.count <= 1 &&
-        !SPTViewBelongsToOwnUI(self) &&
+        !SPTViewBelongsToOwnOrInteractiveUI(self) &&
         SPTIsNearBlackOpaqueFill(self.backgroundColor)) {
         self.backgroundColor = [UIColor clearColor];
     }
@@ -94,12 +107,11 @@ static BOOL SPTViewBelongsToOwnUI(UIView *view) {
 
 %end
 
-// Generic UIViewController hook to transparently expose view backgrounds safely
 %hook UIViewController
 
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    if (SPTIsThemeEnabled() && self.view && !SPTViewBelongsToOwnUI(self.view)) {
+    if (SPTIsThemeEnabled() && self.view && !SPTViewBelongsToOwnOrInteractiveUI(self.view)) {
         if (SPTIsNearBlackOpaqueFill(self.view.backgroundColor)) {
             self.view.backgroundColor = [UIColor clearColor];
         }
