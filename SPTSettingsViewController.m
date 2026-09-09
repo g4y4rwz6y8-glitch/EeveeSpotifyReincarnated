@@ -3,7 +3,14 @@
 #import <PhotosUI/PhotosUI.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-@interface SPTSettingsViewController () <PHPickerViewControllerDelegate, UIDocumentPickerDelegate>
+// Marker subclass — the generic transparency hook in Tweak.x explicitly
+// skips this class so our own settings card never gets cleared.
+@interface SPTOpaqueContainerView : UIView
+@end
+@implementation SPTOpaqueContainerView
+@end
+
+@interface SPTSettingsViewController () <PHPickerViewControllerDelegate>
 
 @property (nonatomic, strong) UISwitch *enabledSwitch;
 @property (nonatomic, strong) UISegmentedControl *typeControl;
@@ -11,6 +18,7 @@
 @property (nonatomic, strong) UIImageView *previewImageView;
 @property (nonatomic, strong) UIButton *resetButton;
 @property (nonatomic, assign) SPTWallpaperType pendingType;
+@property (nonatomic, strong) UIVisualEffectView *cardBackgroundView;
 
 @end
 
@@ -19,13 +27,13 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"Custom Theme";
-    self.view.backgroundColor = [UIColor systemBackgroundColor];
+    self.view.backgroundColor = [UIColor clearColor]; // let the blur card be the only opaque layer
 
     [self buildUI];
     [self syncUIWithManagerState];
 }
 
-#pragma mark - UI Construction
+#pragma mark - UI construction
 
 - (void)buildUI {
     UIBarButtonItem *doneButton = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
@@ -33,10 +41,30 @@
                                                                                   action:@selector(dismissTapped)];
     self.navigationItem.rightBarButtonItem = doneButton;
 
+    // Opaque-ish blurred card sitting behind every control — this is what
+    // fixes legibility over bright/animated wallpapers. Uses our marker
+    // subclass so the generic clearing hook leaves it alone.
+    SPTOpaqueContainerView *card = [[SPTOpaqueContainerView alloc] init];
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    card.layer.cornerRadius = 20;
+    card.clipsToBounds = YES;
+    card.backgroundColor = [[UIColor systemBackgroundColor] colorWithAlphaComponent:0.85];
+    [self.view addSubview:card];
+
+    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThickMaterialDark];
+    self.cardBackgroundView = [[UIVisualEffectView alloc] initWithEffect:blur];
+    self.cardBackgroundView.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:self.cardBackgroundView];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.cardBackgroundView.topAnchor constraintEqualToAnchor:card.topAnchor],
+        [self.cardBackgroundView.bottomAnchor constraintEqualToAnchor:card.bottomAnchor],
+        [self.cardBackgroundView.leadingAnchor constraintEqualToAnchor:card.leadingAnchor],
+        [self.cardBackgroundView.trailingAnchor constraintEqualToAnchor:card.trailingAnchor],
+    ]];
+
     UILabel *enabledLabel = [self labelWithText:@"Enable Custom Theme"];
     self.enabledSwitch = [[UISwitch alloc] init];
     [self.enabledSwitch addTarget:self action:@selector(enabledChanged:) forControlEvents:UIControlEventValueChanged];
-
     UIStackView *enabledRow = [self rowWithViews:@[enabledLabel, self.enabledSwitch]];
 
     self.typeControl = [[UISegmentedControl alloc] initWithItems:@[@"Image", @"GIF", @"Video"]];
@@ -46,7 +74,7 @@
     self.previewImageView.contentMode = UIViewContentModeScaleAspectFill;
     self.previewImageView.clipsToBounds = YES;
     self.previewImageView.layer.cornerRadius = 12;
-    self.previewImageView.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    self.previewImageView.backgroundColor = [UIColor colorWithWhite:0 alpha:0.2];
     self.previewImageView.translatesAutoresizingMaskIntoConstraints = NO;
 
     self.chooseFileButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -64,12 +92,19 @@
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 20;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:stack];
+    [card addSubview:stack];
 
     [NSLayoutConstraint activateConstraints:@[
-        [stack.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:24],
-        [stack.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:20],
-        [stack.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
+        [card.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:12],
+        [card.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:12],
+        [card.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12],
+        [card.bottomAnchor constraintLessThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-12],
+
+        [stack.topAnchor constraintEqualToAnchor:card.topAnchor constant:24],
+        [stack.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:20],
+        [stack.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-20],
+        [stack.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-24],
+
         [self.previewImageView.heightAnchor constraintEqualToConstant:180],
     ]];
 }
@@ -78,6 +113,7 @@
     UILabel *label = [[UILabel alloc] init];
     label.text = text;
     label.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+    label.textColor = [UIColor whiteColor];
     return label;
 }
 
@@ -89,7 +125,7 @@
     return row;
 }
 
-#pragma mark - State Sync
+#pragma mark - State sync
 
 - (void)syncUIWithManagerState {
     SPTCustomThemeManager *manager = [SPTCustomThemeManager sharedManager];
@@ -132,36 +168,24 @@
 }
 
 - (void)chooseFileTapped {
+    PHPickerConfiguration *config = [[PHPickerConfiguration alloc] init];
+    config.selectionLimit = 1;
+
     switch (self.pendingType) {
-        case SPTWallpaperTypeImage:
-        case SPTWallpaperTypeGif:
-            [self presentPhotoPicker];
-            break;
         case SPTWallpaperTypeVideo:
-            [self presentDocumentPickerForVideo];
+            config.filter = [PHPickerFilter videosFilter];
             break;
+        case SPTWallpaperTypeGif:
+            config.filter = [PHPickerFilter anyFilterMatchingSubfilters:@[[PHPickerFilter imagesFilter]]];
+            break;
+        case SPTWallpaperTypeImage:
         default:
+            config.filter = [PHPickerFilter imagesFilter];
             break;
     }
-}
-
-- (void)presentPhotoPicker {
-    PHPickerConfiguration *config = [[PHPickerConfiguration alloc] init];
-    config.filter = self.pendingType == SPTWallpaperTypeGif
-        ? [PHPickerFilter anyFilterMatchingSubfilters:@[[PHPickerFilter imagesFilter]]]
-        : [PHPickerFilter imagesFilter];
-    config.selectionLimit = 1;
 
     PHPickerViewController *picker = [[PHPickerViewController alloc] initWithConfiguration:config];
     picker.delegate = self;
-    [self presentViewController:picker animated:YES completion:nil];
-}
-
-- (void)presentDocumentPickerForVideo {
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
-        initForOpeningContentTypes:@[UTTypeMovie, UTTypeMPEG4Movie]];
-    picker.delegate = self;
-    picker.allowsMultipleSelection = NO;
     [self presentViewController:picker animated:YES completion:nil];
 }
 
@@ -179,6 +203,11 @@
     NSItemProvider *provider = results.firstObject.itemProvider;
     SPTWallpaperType type = self.pendingType;
 
+    if (type == SPTWallpaperTypeVideo) {
+        [self handleVideoProvider:provider];
+        return;
+    }
+
     NSString *typeIdentifier = type == SPTWallpaperTypeGif
         ? (NSString *)UTTypeGIF.identifier
         : (NSString *)UTTypeImage.identifier;
@@ -190,7 +219,6 @@
 
     [provider loadDataRepresentationForTypeIdentifier:typeIdentifier completionHandler:^(NSData *data, NSError *error) {
         if (!data) return;
-
         NSURL *tempURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:
             [NSUUID UUID].UUIDString]];
         [data writeToURL:tempURL atomically:YES];
@@ -202,28 +230,30 @@
     }];
 }
 
-#pragma mark - UIDocumentPickerDelegate
+- (void)handleVideoProvider:(NSItemProvider *)provider {
+    NSString *movieType = (NSString *)UTTypeMovie.identifier;
+    if (![provider hasItemConformingToTypeIdentifier:movieType]) return;
 
-- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    if (urls.count == 0) return;
-    NSURL *sourceURL = urls.firstObject;
+    // In-place file representation avoids a full extra copy into memory —
+    // the system hands us a temp path directly; we just need to relocate
+    // it to a location that outlives the completion handler's cleanup.
+    [provider loadInPlaceFileRepresentationForTypeIdentifier:movieType completionHandler:
+        ^(NSURL *fileURL, BOOL isInPlace, NSError *error) {
+        if (!fileURL) return;
 
-    BOOL didStartAccessing = [sourceURL startAccessingSecurityScopedResource];
-    
-    NSString *filename = [[NSUUID UUID].UUIDString stringByAppendingPathExtension:@"mp4"];
-    NSString *tempPath = [NSTemporaryDirectory() stringByAppendingPathComponent:filename];
-    NSURL *tempURL = [NSURL fileURLWithPath:tempPath];
-    
-    NSError *error = nil;
-    [[NSFileManager defaultManager] copyItemAtURL:sourceURL toURL:tempURL error:&error];
-    if (didStartAccessing) {
-        [sourceURL stopAccessingSecurityScopedResource];
-    }
+        NSURL *destURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:
+            [[NSUUID UUID].UUIDString stringByAppendingPathExtension:@"mp4"]]];
 
-    if (error) return;
+        NSError *copyError;
+        [[NSFileManager defaultManager] copyItemAtURL:fileURL toURL:destURL error:&copyError];
 
-    [[SPTCustomThemeManager sharedManager] setWallpaperFileURL:tempURL type:SPTWallpaperTypeVideo];
-    [self syncUIWithManagerState];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!copyError) {
+                [[SPTCustomThemeManager sharedManager] setWallpaperFileURL:destURL type:SPTWallpaperTypeVideo];
+                [self syncUIWithManagerState];
+            }
+        });
+    }];
 }
 
 @end
