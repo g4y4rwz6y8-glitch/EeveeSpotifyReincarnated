@@ -5,7 +5,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = MySpotifyTheme
 
-MySpotifyTheme_FILES = Tweak.xm \
+MySpotifyTheme_FILES = Tweak.x \
                        SPTCustomThemeManager.m \
                        SPTImageRenderer.m \
                        SPTGifRenderer.m \
