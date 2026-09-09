@@ -25,8 +25,11 @@
     self.layer.shadowRadius = 4;
     self.translatesAutoresizingMaskIntoConstraints = NO;
 
-    // Fix zoom-out / press shrinking effect when tapped
+    // Suppress deprecated warnings for legacy highlighted toggle
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     self.adjustsImageWhenHighlighted = NO;
+#pragma clang diagnostic pop
 
     UIImage *icon = [UIImage systemImageNamed:@"paintpalette.fill"];
     [self setImage:icon forState:UIControlStateNormal];
@@ -43,7 +46,6 @@
     [self addGestureRecognizer:longPress];
 }
 
-// Override highlight animation to stop the button from scaling / zooming out on touch
 - (void)setHighlighted:(BOOL)highlighted {
     [super setHighlighted:highlighted];
     self.transform = CGAffineTransformIdentity;
@@ -52,7 +54,6 @@
 - (void)installInWindow:(UIWindow *)window {
     if (!window) return;
     
-    // Always bring floating button to the front layer of the window
     if (self.superview != window) {
         [self removeFromSuperview];
         [window addSubview:self];
@@ -186,7 +187,23 @@
 }
 
 - (UIViewController *)topmostViewController {
-    UIWindow *window = self.window ?: [UIApplication sharedApplication].keyWindow;
+    UIWindow *window = self.window;
+    if (!window) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (scene.activationState == UISceneActivationStateForegroundActive &&
+                [scene isKindOfClass:[UIWindowScene class]]) {
+                UIWindowScene *windowScene = (UIWindowScene *)scene;
+                for (UIWindow *w in windowScene.windows) {
+                    if (w.isKeyWindow) {
+                        window = w;
+                        break;
+                    }
+                }
+            }
+            if (window) break;
+        }
+    }
+
     UIViewController *top = window.rootViewController;
     while (top.presentedViewController) {
         top = top.presentedViewController;
