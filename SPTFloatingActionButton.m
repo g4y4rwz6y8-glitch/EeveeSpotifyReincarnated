@@ -25,6 +25,9 @@
     self.layer.shadowRadius = 4;
     self.translatesAutoresizingMaskIntoConstraints = NO;
 
+    // Fix zoom-out / press shrinking effect when tapped
+    self.adjustsImageWhenHighlighted = NO;
+
     UIImage *icon = [UIImage systemImageNamed:@"paintpalette.fill"];
     [self setImage:icon forState:UIControlStateNormal];
     self.tintColor = [UIColor whiteColor];
@@ -40,18 +43,31 @@
     [self addGestureRecognizer:longPress];
 }
 
+// Override highlight animation to stop the button from scaling / zooming out on touch
+- (void)setHighlighted:(BOOL)highlighted {
+    [super setHighlighted:highlighted];
+    self.transform = CGAffineTransformIdentity;
+}
+
 - (void)installInWindow:(UIWindow *)window {
-    if (self.superview == window) return;
-    [self removeFromSuperview];
-    [window addSubview:self];
+    if (!window) return;
+    
+    // Always bring floating button to the front layer of the window
+    if (self.superview != window) {
+        [self removeFromSuperview];
+        [window addSubview:self];
+    }
+    
     [window bringSubviewToFront:self];
 
-    [NSLayoutConstraint activateConstraints:@[
-        [self.widthAnchor constraintEqualToConstant:52],
-        [self.heightAnchor constraintEqualToConstant:52],
-        [self.trailingAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.trailingAnchor constant:-16],
-        [self.bottomAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.bottomAnchor constant:-140],
-    ]];
+    if (self.constraints.count == 0 || self.superview != window) {
+        [NSLayoutConstraint activateConstraints:@[
+            [self.widthAnchor constraintEqualToConstant:52],
+            [self.heightAnchor constraintEqualToConstant:52],
+            [self.trailingAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.trailingAnchor constant:-16],
+            [self.bottomAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.bottomAnchor constant:-140],
+        ]];
+    }
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
@@ -71,7 +87,7 @@
     [topVC presentViewController:settingsVC animated:YES completion:nil];
 }
 
-#pragma mark - Long press: hierarchy inspector
+#pragma mark - Long press: Multi-Page Hierarchy Inspector
 
 - (void)handleLongPress:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan) return;
@@ -79,38 +95,47 @@
     UIViewController *topVC = [self topmostViewController];
     if (!topVC) return;
 
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Diagnostics"
-                                                                     message:nil
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Diagnostics & Dump"
+                                                                     message:@"Choose diagnostic dump options for current screen"
                                                               preferredStyle:UIAlertControllerStyleActionSheet];
 
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Dump Active View Hierarchy"
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Dump Active Visible Screen Hierarchy"
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *action) {
-        [self dumpAndShareHierarchyFromViewController:topVC];
+        [self dumpAndShareHierarchyFromViewController:topVC pageName:@"ActiveScreen"];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Dump Window Root Hierarchy"
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *action) {
+        if (self.window.rootViewController) {
+            [self dumpAndShareHierarchyFromViewController:self.window.rootViewController pageName:@"WindowRoot"];
+        }
     }]];
 
     [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
 
-    // iPad needs a popover source or it crashes.
     sheet.popoverPresentationController.sourceView = self;
     sheet.popoverPresentationController.sourceRect = self.bounds;
 
     [topVC presentViewController:sheet animated:YES completion:nil];
 }
 
-- (void)dumpAndShareHierarchyFromViewController:(UIViewController *)vc {
+- (void)dumpAndShareHierarchyFromViewController:(UIViewController *)vc pageName:(NSString *)pageName {
     UIViewController *targetVC = vc;
-    while (targetVC.presentedViewController) {
+    while (targetVC.presentedViewController && ![targetVC.presentedViewController isKindOfClass:[UIAlertController class]]) {
         targetVC = targetVC.presentedViewController;
     }
 
     NSMutableString *output = [NSMutableString string];
+    [output appendFormat:@"Dump Section: %@\n", pageName];
     [output appendFormat:@"Root VC: %@\n", NSStringFromClass(targetVC.class)];
     [output appendFormat:@"Timestamp: %@\n\n", [NSDate date]];
+    
     [self appendDescriptionOfView:targetVC.view depth:0 into:output];
 
-    NSURL *fileURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:
-        [NSString stringWithFormat:@"spt_hierarchy_dump_%.0f.txt", [NSDate date].timeIntervalSince1970]]];
+    NSString *fileName = [NSString stringWithFormat:@"spt_hierarchy_%@_%.0f.txt", pageName, [NSDate date].timeIntervalSince1970];
+    NSURL *fileURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:fileName]];
 
     NSError *writeError;
     [output writeToURL:fileURL atomically:YES encoding:NSUTF8StringEncoding error:&writeError];
@@ -125,6 +150,8 @@
 }
 
 - (void)appendDescriptionOfView:(UIView *)view depth:(NSInteger)depth into:(NSMutableString *)output {
+    if (!view) return;
+    
     NSString *indent = [@"" stringByPaddingToLength:depth * 2 withString:@" " startingAtIndex:0];
 
     NSString *bgDescription = view.backgroundColor
@@ -159,7 +186,7 @@
 }
 
 - (UIViewController *)topmostViewController {
-    UIWindow *window = self.window;
+    UIWindow *window = self.window ?: [UIApplication sharedApplication].keyWindow;
     UIViewController *top = window.rootViewController;
     while (top.presentedViewController) {
         top = top.presentedViewController;
