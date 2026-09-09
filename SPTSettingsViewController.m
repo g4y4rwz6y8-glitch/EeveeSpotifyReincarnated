@@ -1,0 +1,216 @@
+#import "SPTSettingsViewController.h"
+#import "SPTCustomThemeManager.h"
+#import <PhotosUI/PhotosUI.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+
+@interface SPTSettingsViewController () <PHPickerViewControllerDelegate, UIDocumentPickerDelegate>
+
+@property (nonatomic, strong) UISwitch *enabledSwitch;
+@property (nonatomic, strong) UISegmentedControl *typeControl;
+@property (nonatomic, strong) UIButton *chooseFileButton;
+@property (nonatomic, strong) UIImageView *previewImageView;
+@property (nonatomic, strong) UIButton *resetButton;
+@property (nonatomic, assign) SPTWallpaperType pendingType;
+
+@end
+
+@implementation SPTSettingsViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"Custom Theme";
+    self.view.backgroundColor = [UIColor systemBackgroundColor];
+
+    [self buildUI];
+    [self syncUIWithManagerState];
+}
+
+- (void)buildUI {
+    UIBarButtonItem *doneButton = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                                                                                  target:self
+                                                                                  action:@selector(dismissTapped)];
+    self.navigationItem.rightBarButtonItem = doneButton;
+
+    UILabel *enabledLabel = [self labelWithText:@"Enable Custom Theme"];
+    self.enabledSwitch = [[UISwitch alloc] init];
+    [self.enabledSwitch addTarget:self action:@selector(enabledChanged:) forControlEvents:UIControlEventValueChanged];
+
+    UIStackView *enabledRow = [self rowWithViews:@[enabledLabel, self.enabledSwitch]];
+
+    self.typeControl = [[UISegmentedControl alloc] initWithItems:@[@"Image", @"GIF", @"Video"]];
+    [self.typeControl addTarget:self action:@selector(typeChanged:) forControlEvents:UIControlEventValueChanged];
+
+    self.previewImageView = [[UIImageView alloc] init];
+    self.previewImageView.contentMode = UIViewContentModeScaleAspectFill;
+    self.previewImageView.clipsToBounds = YES;
+    self.previewImageView.layer.cornerRadius = 12;
+    self.previewImageView.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    self.previewImageView.translatesAutoresizingMaskIntoConstraints = NO;
+
+    self.chooseFileButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.chooseFileButton setTitle:@"Choose Wallpaper" forState:UIControlStateNormal];
+    [self.chooseFileButton addTarget:self action:@selector(chooseFileTapped) forControlEvents:UIControlEventTouchUpInside];
+
+    self.resetButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.resetButton setTitle:@"Reset to Default" forState:UIControlStateNormal];
+    self.resetButton.tintColor = [UIColor systemRedColor];
+    [self.resetButton addTarget:self action:@selector(resetTapped) forControlEvents:UIControlEventTouchUpInside];
+
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        enabledRow, self.typeControl, self.previewImageView, self.chooseFileButton, self.resetButton
+    ]];
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.spacing = 20;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:stack];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:24],
+        [stack.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:20],
+        [stack.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
+        [self.previewImageView.heightAnchor constraintEqualToConstant:180],
+    ]];
+}
+
+- (UILabel *)labelWithText:(NSString *)text {
+    UILabel *label = [[UILabel alloc] init];
+    label.text = text;
+    label.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+    return label;
+}
+
+- (UIStackView *)rowWithViews:(NSArray<UIView *> *)views {
+    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:views];
+    row.axis = UILayoutConstraintAxisHorizontal;
+    row.distribution = UIStackViewDistributionEqualSpacing;
+    row.alignment = UIStackViewAlignmentCenter;
+    return row;
+}
+
+- (void)syncUIWithManagerState {
+    SPTCustomThemeManager *manager = [SPTCustomThemeManager sharedManager];
+    self.enabledSwitch.on = manager.themeEnabled;
+    self.pendingType = manager.currentType == SPTWallpaperTypeNone ? SPTWallpaperTypeImage : manager.currentType;
+    self.typeControl.selectedSegmentIndex = self.pendingType - 1;
+
+    if (manager.activeRenderer) {
+        self.previewImageView.image = [self snapshotOfRenderView:manager.activeRenderer.renderView];
+    } else {
+        self.previewImageView.image = nil;
+    }
+}
+
+- (UIImage *)snapshotOfRenderView:(UIView *)view {
+    if (view.bounds.size.width == 0 || view.bounds.size.height == 0) return nil;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:view.bounds.size format:format];
+    return [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        [view drawViewHierarchyInRect:view.bounds afterScreenUpdates:NO];
+    }];
+}
+
+- (void)dismissTapped {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)enabledChanged:(UISwitch *)sender {
+    CFPreferencesSetAppValue(CFSTR("SPTCustomThemeEnabled"),
+                              sender.on ? kCFBooleanTrue : kCFBooleanFalse,
+                              CFSTR("com.yourdomain.spotifytheme"));
+    CFPreferencesAppSynchronize(CFSTR("com.yourdomain.spotifytheme"));
+    [[SPTCustomThemeManager sharedManager] reloadPreferences];
+}
+
+- (void)typeChanged:(UISegmentedControl *)sender {
+    self.pendingType = (SPTWallpaperType)(sender.selectedSegmentIndex + 1);
+}
+
+- (void)chooseFileTapped {
+    switch (self.pendingType) {
+        case SPTWallpaperTypeImage:
+        case SPTWallpaperTypeGif:
+            [self presentPhotoPicker];
+            break;
+        case SPTWallpaperTypeVideo:
+            [self presentDocumentPickerForVideo];
+            break;
+        default:
+            break;
+    }
+}
+
+- (void)presentPhotoPicker {
+    PHPickerConfiguration *config = [[PHPickerConfiguration alloc] init];
+    config.filter = self.pendingType == SPTWallpaperTypeGif
+        ? [PHPickerFilter anyFilterMatchingSubfilters:@[[PHPickerFilter imagesFilter]]]
+        : [PHPickerFilter imagesFilter];
+    config.selectionLimit = 1;
+
+    PHPickerViewController *picker = [[PHPickerViewController alloc] initWithConfiguration:config];
+    picker.delegate = self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)presentDocumentPickerForVideo {
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeMovie, UTTypeMPEG4]];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)resetTapped {
+    [[SPTCustomThemeManager sharedManager] resetWallpaper];
+    self.previewImageView.image = nil;
+}
+
+- (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
+    [picker dismissViewControllerAnimated:YES completion:nil];
+    if (results.count == 0) return;
+
+    NSItemProvider *provider = results.firstObject.itemProvider;
+    SPTWallpaperType type = self.pendingType;
+
+    NSString *typeIdentifier = type == SPTWallpaperTypeGif
+        ? (NSString *)UTTypeGIF.identifier
+        : (NSString *)UTTypeImage.identifier;
+
+    if (![provider hasItemConformingToTypeIdentifier:typeIdentifier] && type == SPTWallpaperTypeGif) {
+        type = SPTWallpaperTypeImage;
+        typeIdentifier = (NSString *)UTTypeImage.identifier;
+    }
+
+    [provider loadDataRepresentationForTypeIdentifier:typeIdentifier completionHandler:^(NSData *data, NSError *error) {
+        if (!data) return;
+
+        NSURL *tempURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:
+            [NSUUID UUID].UUIDString]];
+        [data writeToURL:tempURL atomically:YES];
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[SPTCustomThemeManager sharedManager] setWallpaperFileURL:tempURL type:type];
+            [self syncUIWithManagerState];
+        });
+    }];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    if (urls.count == 0) return;
+    NSURL *sourceURL = urls.firstObject;
+
+    BOOL didStartAccessing = [sourceURL startAccessingSecurityScopedResource];
+    NSURL *tempURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:
+        [NSUUID UUID].UUIDString stringByAppendingPathExtension:@"mp4"]];
+    NSError *error;
+    [[NSFileManager defaultManager] copyItemAtURL:sourceURL toURL:tempURL error:&error];
+    if (didStartAccessing) {
+        [sourceURL stopAccessingSecurityScopedResource];
+    }
+
+    if (error) return;
+
+    [[SPTCustomThemeManager sharedManager] setWallpaperFileURL:tempURL type:SPTWallpaperTypeVideo];
+    [self syncUIWithManagerState];
+}
+
+@end
