@@ -1,5 +1,7 @@
 #import "SPTCustomThemeManager.h"
 #import "SPTImageRenderer.h"
+#import "SPTGifRenderer.h"
+#import "SPTVideoRenderer.h"
 
 NSString *const kEeveeThemeEnabledKey          = @"EeveeTheme_Enabled";
 NSString *const kEeveeThemeModeKey             = @"EeveeTheme_Mode";
@@ -15,7 +17,6 @@ NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotification"
 
 @interface SPTCustomThemeManager ()
 
-// Turn public readonly containerView into private readwrite
 @property (nonatomic, strong, readwrite) UIView *containerView;
 
 @end
@@ -47,10 +48,13 @@ NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotification"
     BOOL enabled = [defaults boolForKey:kEeveeThemeEnabledKey];
     NSInteger mode = [defaults integerForKey:kEeveeThemeModeKey];
     
-    // Auto-fallback: if theme is enabled but mode was 0, activate image mode if media exists
     if (enabled && mode == 0) {
         if ([SPTImageRenderer loadSavedImage] != nil) {
             [defaults setInteger:EeveeThemeModeImage forKey:kEeveeThemeModeKey];
+            [defaults synchronize];
+            return YES;
+        } else if ([SPTVideoRenderer savedVideoURL] != nil) {
+            [defaults setInteger:EeveeThemeModeVideo forKey:kEeveeThemeModeKey];
             [defaults synchronize];
             return YES;
         }
@@ -72,7 +76,7 @@ NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotification"
     self.containerView.backgroundColor = [UIColor clearColor];
     self.containerView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.containerView.clipsToBounds = YES;
-    self.containerView.userInteractionEnabled = NO; // Allows touch events to pass directly to Spotify controls
+    self.containerView.userInteractionEnabled = NO;
     self.containerView.hidden = ![SPTCustomThemeManager isCustomThemeActive];
     
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
@@ -122,18 +126,15 @@ NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotification"
     self.targetWindow = window;
     self.containerView.frame = window.bounds;
     
-    // Ensure containerView is inserted at index 0 and kept at the back of the window
     if (self.containerView.superview != window) {
         [self.containerView removeFromSuperview];
         [window insertSubview:self.containerView atIndex:0];
     }
     [window sendSubviewToBack:self.containerView];
     
-    // Make hosting window transparent
     window.backgroundColor = [UIColor clearColor];
     window.opaque = NO;
     
-    // Make rootViewController view transparent
     if (window.rootViewController && window.rootViewController.view) {
         window.rootViewController.view.backgroundColor = [UIColor clearColor];
         window.rootViewController.view.opaque = NO;
@@ -161,20 +162,60 @@ NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotification"
     
     if (!active) {
         [[SPTImageRenderer sharedInstance] stopRendering];
+        [[SPTGifRenderer sharedInstance] stopRendering];
+        [[SPTVideoRenderer sharedInstance] stopRendering];
         return;
     }
     
     EeveeThemeMode mode = self.currentMode;
-    if (mode == EeveeThemeModeImage || mode == EeveeThemeModeNone) {
-        UIView *rendererView = [SPTImageRenderer sharedInstance].rendererView;
-        if (rendererView.superview != self.containerView) {
-            [rendererView removeFromSuperview];
-            [self.containerView addSubview:rendererView];
+    
+    // Manage active renderer according to selected media mode
+    switch (mode) {
+        case EeveeThemeModeImage: {
+            [[SPTGifRenderer sharedInstance] stopRendering];
+            [[SPTVideoRenderer sharedInstance] stopRendering];
+            
+            UIView *view = [SPTImageRenderer sharedInstance].rendererView;
+            if (view.superview != self.containerView) {
+                [view removeFromSuperview];
+                [self.containerView addSubview:view];
+            }
+            [[SPTImageRenderer sharedInstance] updateLayoutWithBounds:self.containerView.bounds];
+            [[SPTImageRenderer sharedInstance] startRendering];
+            break;
         }
-        [[SPTImageRenderer sharedInstance] updateLayoutWithBounds:self.containerView.bounds];
-        [[SPTImageRenderer sharedInstance] startRendering];
-    } else {
-        [[SPTImageRenderer sharedInstance] stopRendering];
+        case EeveeThemeModeGIF: {
+            [[SPTImageRenderer sharedInstance] stopRendering];
+            [[SPTVideoRenderer sharedInstance] stopRendering];
+            
+            UIView *view = [SPTGifRenderer sharedInstance].rendererView;
+            if (view.superview != self.containerView) {
+                [view removeFromSuperview];
+                [self.containerView addSubview:view];
+            }
+            [[SPTGifRenderer sharedInstance] updateLayoutWithBounds:self.containerView.bounds];
+            [[SPTGifRenderer sharedInstance] startRendering];
+            break;
+        }
+        case EeveeThemeModeVideo: {
+            [[SPTImageRenderer sharedInstance] stopRendering];
+            [[SPTGifRenderer sharedInstance] stopRendering];
+            
+            UIView *view = [SPTVideoRenderer sharedInstance].rendererView;
+            if (view.superview != self.containerView) {
+                [view removeFromSuperview];
+                [self.containerView addSubview:view];
+            }
+            [[SPTVideoRenderer sharedInstance] updateLayoutWithBounds:self.containerView.bounds];
+            [[SPTVideoRenderer sharedInstance] startRendering];
+            break;
+        }
+        default: {
+            [[SPTImageRenderer sharedInstance] stopRendering];
+            [[SPTGifRenderer sharedInstance] stopRendering];
+            [[SPTVideoRenderer sharedInstance] stopRendering];
+            break;
+        }
     }
     
     [self ensureAttached];
