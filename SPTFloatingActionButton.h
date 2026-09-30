@@ -7,6 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (instancetype)sharedInstance;
 - (void)attachToWindow:(UIWindow *)window;
 - (void)presentThemeSettings;
+- (void)setFloatingAlpha:(CGFloat)alpha animated:(BOOL)animated;
 
 @end
 
