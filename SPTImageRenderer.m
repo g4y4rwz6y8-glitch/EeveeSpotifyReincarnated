@@ -3,10 +3,10 @@
 
 @interface SPTImageRenderer ()
 
-@property (nonatomic, strong) UIView *rendererView;
-@property (nonatomic, strong) UIImageView *imageView;
-@property (nonatomic, strong) UIVisualEffectView *blurView;
-@property (nonatomic, strong) UIView *dimmingView;
+@property (nonatomic, strong, readwrite) UIView *rendererView;
+@property (nonatomic, strong, readwrite) UIImageView *imageView;
+@property (nonatomic, strong, readwrite) UIVisualEffectView *blurView;
+@property (nonatomic, strong, readwrite) UIView *dimmingView;
 @property (nonatomic, strong, nullable) UIImage *currentImage;
 
 @end
@@ -41,7 +41,6 @@
     self.rendererView.clipsToBounds = YES;
     self.rendererView.userInteractionEnabled = NO;
     
-    // Background Image Layer
     self.imageView = [[UIImageView alloc] initWithFrame:screenBounds];
     self.imageView.contentMode = UIViewContentModeScaleAspectFill;
     self.imageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -49,46 +48,39 @@
     self.imageView.backgroundColor = [UIColor clearColor];
     [self.rendererView addSubview:self.imageView];
     
-    // Dimming Overlay (allows readable text on bright wallpapers)
     self.dimmingView = [[UIView alloc] initWithFrame:screenBounds];
     self.dimmingView.backgroundColor = [UIColor blackColor];
     self.dimmingView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.dimmingView.alpha = 0.15f;
+    self.dimmingView.alpha = 0.20f;
     [self.rendererView addSubview:self.dimmingView];
     
-    // Glass Blur Layer
     UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
     self.blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
     self.blurView.frame = screenBounds;
     self.blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.blurView.alpha = 0.70f;
+    self.blurView.alpha = 0.65f;
     [self.rendererView addSubview:self.blurView];
 }
 
 + (nullable UIImage *)loadSavedImage {
+    NSString *themeDir = [SPTCustomThemeManager themeMediaDirectory];
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSString *ext = [defaults stringForKey:kEeveeThemeExtensionKey] ?: @"png";
     
-    NSArray<NSString *> *searchDirs = @[
-        [SPTCustomThemeManager themeMediaDirectory],
-        [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@"EeveeTheme"],
-        [NSTemporaryDirectory() stringByAppendingPathComponent:@"EeveeTheme"]
+    NSArray<NSString *> *candidates = @[
+        [themeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"custom_theme_media.%@", ext]],
+        [themeDir stringByAppendingPathComponent:@"custom_theme_media.png"],
+        [themeDir stringByAppendingPathComponent:@"custom_theme_media.jpg"],
+        [themeDir stringByAppendingPathComponent:@"custom_theme_media.jpeg"],
+        [themeDir stringByAppendingPathComponent:@"custom_theme_media.dat"]
     ];
     
-    NSArray<NSString *> *extensions = @[ext, @"png", @"jpg", @"jpeg", @"dat"];
     NSFileManager *fm = [NSFileManager defaultManager];
-    
-    for (NSString *dir in searchDirs) {
-        for (NSString *currExt in extensions) {
-            NSString *filePath = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.%@", kEeveeThemeMediaFileName, currExt]];
-            if ([fm fileExistsAtPath:filePath]) {
-                NSData *data = [NSData dataWithContentsOfFile:filePath options:NSDataReadingMappedIfSafe error:nil];
-                if (data && data.length > 0) {
-                    UIImage *img = [UIImage imageWithData:data scale:[UIScreen mainScreen].scale];
-                    if (img) {
-                        return img;
-                    }
-                }
+    for (NSString *path in candidates) {
+        if ([fm fileExistsAtPath:path]) {
+            NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
+            if (data && data.length > 0) {
+                return [UIImage imageWithData:data scale:[UIScreen mainScreen].scale];
             }
         }
     }
@@ -96,28 +88,23 @@
 }
 
 - (void)reloadImage {
-    UIImage *image = [SPTImageRenderer loadSavedImage];
-    self.currentImage = image;
-    
-    void (^updateBlock)(void) = ^{
-        self.imageView.image = image;
-        self.rendererView.hidden = (image == nil);
-    };
-    
-    if ([NSThread isMainThread]) {
-        updateBlock();
-    } else {
-        dispatch_async(dispatch_get_main_queue(), updateBlock);
-    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        UIImage *image = [SPTImageRenderer loadSavedImage];
+        self.currentImage = image;
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.imageView.image = image;
+            self.rendererView.hidden = (image == nil);
+        });
+    });
 }
 
 - (void)applySettings {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    
     float opacity = [defaults objectForKey:kEeveeThemeOpacityKey] ? [defaults floatForKey:kEeveeThemeOpacityKey] : 0.85f;
     BOOL blurEnabled = [defaults objectForKey:kEeveeThemeBlurEnabledKey] ? [defaults boolForKey:kEeveeThemeBlurEnabledKey] : YES;
     NSInteger blurStyle = [defaults integerForKey:kEeveeThemeBlurStyleKey];
-    float blurAlpha = [defaults objectForKey:kEeveeThemeBlurAlphaKey] ? [defaults floatForKey:kEeveeThemeBlurAlphaKey] : 0.70f;
+    float blurAlpha = [defaults objectForKey:kEeveeThemeBlurAlphaKey] ? [defaults floatForKey:kEeveeThemeBlurAlphaKey] : 0.65f;
     
     void (^applyBlock)(void) = ^{
         self.dimmingView.alpha = 1.0f - opacity;
@@ -140,7 +127,9 @@
             self.blurView.hidden = YES;
         }
         
-        [self reloadImage];
+        if (!self.currentImage) {
+            [self reloadImage];
+        }
     };
     
     if ([NSThread isMainThread]) {
