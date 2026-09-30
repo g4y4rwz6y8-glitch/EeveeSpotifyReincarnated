@@ -1,22 +1,22 @@
 #import "SPTCustomThemeManager.h"
 #import "SPTImageRenderer.h"
 
-NSString *const kEeveeThemeEnabledKey         = @"EeveeTheme_Enabled";
-NSString *const kEeveeThemeModeKey            = @"EeveeTheme_Mode";
-NSString *const kEeveeThemeBlurEnabledKey     = @"EeveeTheme_BlurEnabled";
-NSString *const kEeveeThemeBlurStyleKey       = @"EeveeTheme_BlurStyle";
-NSString *const kEeveeThemeOpacityKey         = @"EeveeTheme_Opacity";
-NSString *const kEeveeThemeBlurAlphaKey       = @"EeveeTheme_BlurAlpha";
-NSString *const kEeveeThemeHexColorKey        = @"EeveeTheme_HexColor";
-NSString *const kEeveeThemeExtensionKey       = @"EeveeTheme_MediaExtension";
-NSString *const kEeveeThemeMediaFileName      = @"custom_theme_media";
+NSString *const kEeveeThemeEnabledKey          = @"EeveeTheme_Enabled";
+NSString *const kEeveeThemeModeKey             = @"EeveeTheme_Mode";
+NSString *const kEeveeThemeBlurEnabledKey      = @"EeveeTheme_BlurEnabled";
+NSString *const kEeveeThemeBlurStyleKey        = @"EeveeTheme_BlurStyle";
+NSString *const kEeveeThemeOpacityKey          = @"EeveeTheme_Opacity";
+NSString *const kEeveeThemeBlurAlphaKey        = @"EeveeTheme_BlurAlpha";
+NSString *const kEeveeThemeHexColorKey         = @"EeveeTheme_HexColor";
+NSString *const kEeveeThemeExtensionKey        = @"EeveeTheme_MediaExtension";
+NSString *const kEeveeThemeMediaFileName       = @"custom_theme_media";
 NSString *const kEeveeThemeChangedNotification = @"SPTThemeSettingsChangedNotification";
-NSString *const kEeveeThemeReloadNotification = @"EeveeThemeReloadNotification";
+NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotification";
 
 @interface SPTCustomThemeManager ()
 
-@property (nonatomic, strong) UIView *containerView;
-@property (nonatomic, weak, nullable) UIWindow *targetWindow;
+// Turn public readonly containerView into private readwrite
+@property (nonatomic, strong, readwrite) UIView *containerView;
 
 @end
 
@@ -47,7 +47,7 @@ NSString *const kEeveeThemeReloadNotification = @"EeveeThemeReloadNotification";
     BOOL enabled = [defaults boolForKey:kEeveeThemeEnabledKey];
     NSInteger mode = [defaults integerForKey:kEeveeThemeModeKey];
     
-    // Auto-fallback: if user enabled theme but mode wasn't explicitly set, check if saved media exists
+    // Auto-fallback: if theme is enabled but mode was 0, activate image mode if media exists
     if (enabled && mode == 0) {
         if ([SPTImageRenderer loadSavedImage] != nil) {
             [defaults setInteger:EeveeThemeModeImage forKey:kEeveeThemeModeKey];
@@ -72,7 +72,7 @@ NSString *const kEeveeThemeReloadNotification = @"EeveeThemeReloadNotification";
     self.containerView.backgroundColor = [UIColor clearColor];
     self.containerView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.containerView.clipsToBounds = YES;
-    self.containerView.userInteractionEnabled = NO; // Touches pass directly to Spotify views
+    self.containerView.userInteractionEnabled = NO; // Allows touch events to pass directly to Spotify controls
     self.containerView.hidden = ![SPTCustomThemeManager isCustomThemeActive];
     
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
@@ -122,18 +122,18 @@ NSString *const kEeveeThemeReloadNotification = @"EeveeThemeReloadNotification";
     self.targetWindow = window;
     self.containerView.frame = window.bounds;
     
-    // Ensure containerView is permanently at index 0 of window
+    // Ensure containerView is inserted at index 0 and kept at the back of the window
     if (self.containerView.superview != window) {
         [self.containerView removeFromSuperview];
         [window insertSubview:self.containerView atIndex:0];
     }
     [window sendSubviewToBack:self.containerView];
     
-    // Clear hosting window
+    // Make hosting window transparent
     window.backgroundColor = [UIColor clearColor];
     window.opaque = NO;
     
-    // Clear root view controller view
+    // Make rootViewController view transparent
     if (window.rootViewController && window.rootViewController.view) {
         window.rootViewController.view.backgroundColor = [UIColor clearColor];
         window.rootViewController.view.opaque = NO;
