@@ -1,25 +1,13 @@
 #import "ThemeSettingsViewController.h"
+#import "SPTCustomThemeManager.h"
+#import "SPTImageRenderer.h"
+#import "SPTGifRenderer.h"
+#import "SPTVideoRenderer.h"
+#import "SPTFloatingActionButton.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <PhotosUI/PhotosUI.h>
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
-
-#if __has_include("SPTCustomThemeManager.h")
-#import "SPTCustomThemeManager.h"
-#else
-// Fallback definitions only if SPTCustomThemeManager.h is not found
-static NSString *const kEeveeThemeEnabledKey          = @"EeveeTheme_Enabled";
-static NSString *const kEeveeThemeModeKey             = @"EeveeTheme_Mode"; // 0: None, 1: Color, 2: Image, 3: GIF, 4: Video
-static NSString *const kEeveeThemeBlurEnabledKey      = @"EeveeTheme_BlurEnabled";
-static NSString *const kEeveeThemeBlurStyleKey        = @"EeveeTheme_BlurStyle"; // 0: UltraThin, 1: Thin, 2: Regular, 3: Dark
-static NSString *const kEeveeThemeOpacityKey          = @"EeveeTheme_Opacity"; // float 0.0 - 1.0
-static NSString *const kEeveeThemeBlurAlphaKey        = @"EeveeTheme_BlurAlpha"; // float 0.0 - 1.0
-static NSString *const kEeveeThemeHexColorKey         = @"EeveeTheme_HexColor";
-static NSString *const kEeveeThemeExtensionKey        = @"EeveeTheme_MediaExtension";
-static NSString *const kEeveeThemeMediaFileName       = @"custom_theme_media";
-static NSString *const kEeveeThemeChangedNotification = @"SPTThemeSettingsChangedNotification";
-static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotification";
-#endif
 
 @interface ThemeSettingsViewController ()
 
@@ -32,22 +20,19 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
 @property (nonatomic, strong) UILabel *opacityValueLabel;
 @property (nonatomic, strong) UILabel *blurAlphaValueLabel;
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
+@property (nonatomic, strong) UIView *previewContainer;
+@property (nonatomic, strong) UIImageView *previewImageView;
+@property (nonatomic, strong) UIVisualEffectView *previewBlurView;
+@property (nonatomic, strong) UIImpactFeedbackGenerator *hapticFeedback;
 
 @end
 
 @implementation ThemeSettingsViewController
 
-#pragma mark - Storage & Directory Utilities
+#pragma mark - Directory & Storage
 
 + (NSString *)themeMediaDirectory {
-    NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
-    NSString *baseDir = paths.firstObject ?: NSTemporaryDirectory();
-    NSString *themeDir = [baseDir stringByAppendingPathComponent:@"EeveeTheme"];
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    if (![fileManager fileExistsAtPath:themeDir]) {
-        [fileManager createDirectoryAtPath:themeDir withIntermediateDirectories:YES attributes:nil error:nil];
-    }
-    return themeDir;
+    return [SPTCustomThemeManager themeMediaDirectory];
 }
 
 + (NSString *)savedMediaPath {
@@ -68,28 +53,32 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     }
 }
 
-#pragma mark - View Controller Lifecycle
+#pragma mark - Lifecycle
 
 - (void)viewDidLoad {
     [super viewDidLoad];
     
-    self.title = @"Custom Theme";
-    self.view.backgroundColor = [UIColor colorWithRed:0.07 green:0.07 blue:0.07 alpha:1.0];
+    self.title = @"Eevee Theme Studio";
+    self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.07 alpha:1.0];
+    
+    self.hapticFeedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+    [self.hapticFeedback prepare];
     
     [self setupNavigationItems];
+    [self setupHeaderPreview];
     [self setupTableView];
     [self setupActivityIndicator];
 }
 
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    [self.tableView reloadData];
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [[SPTFloatingActionButton sharedInstance] setFloatingAlpha:1.0 animated:YES];
 }
 
 - (void)setupNavigationItems {
     if (self.navigationController) {
-        self.navigationController.navigationBar.barTintColor = [UIColor blackColor];
-        self.navigationController.navigationBar.translucent = NO;
+        self.navigationController.navigationBar.barTintColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.09 alpha:0.95];
+        self.navigationController.navigationBar.translucent = YES;
         self.navigationController.navigationBar.tintColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
         self.navigationController.navigationBar.titleTextAttributes = @{
             NSForegroundColorAttributeName: [UIColor whiteColor],
@@ -97,26 +86,64 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
         };
     }
     
-    UIBarButtonItem *doneItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(doneAction)];
+    UIBarButtonItem *doneItem = [[UIBarButtonItem alloc] initWithTitle:@"Done" style:UIBarButtonItemStyleDone target:self action:@selector(doneAction)];
     self.navigationItem.rightBarButtonItem = doneItem;
     
     UIBarButtonItem *resetItem = [[UIBarButtonItem alloc] initWithTitle:@"Reset" style:UIBarButtonItemStylePlain target:self action:@selector(resetThemeSettings)];
+    resetItem.tintColor = [UIColor colorWithRed:0.95 green:0.35 blue:0.35 alpha:1.0];
     self.navigationItem.leftBarButtonItem = resetItem;
 }
 
-- (void)setupTableView {
-    UITableViewStyle style = UITableViewStyleGrouped;
-    if (@available(iOS 13.0, *)) {
-        style = UITableViewStyleInsetGrouped;
-    }
+- (void)setupHeaderPreview {
+    CGFloat previewHeight = 150.0f;
+    CGRect previewFrame = CGRectMake(16, 12, self.view.bounds.size.width - 32, previewHeight);
     
+    self.previewContainer = [[UIView alloc] initWithFrame:previewFrame];
+    self.previewContainer.backgroundColor = [UIColor colorWithRed:0.12 green:0.12 blue:0.14 alpha:1.0];
+    self.previewContainer.layer.cornerRadius = 16.0f;
+    self.previewContainer.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.12].CGColor;
+    self.previewContainer.layer.borderWidth = 1.0f;
+    self.previewContainer.clipsToBounds = YES;
+    
+    self.previewImageView = [[UIImageView alloc] initWithFrame:self.previewContainer.bounds];
+    self.previewImageView.contentMode = UIViewContentModeScaleAspectFill;
+    self.previewImageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.previewImageView.clipsToBounds = YES;
+    [self.previewContainer addSubview:self.previewImageView];
+    
+    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+    self.previewBlurView = [[UIVisualEffectView alloc] initWithEffect:blur];
+    self.previewBlurView.frame = self.previewContainer.bounds;
+    self.previewBlurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.previewContainer addSubview:self.previewBlurView];
+    
+    UILabel *badgeLabel = [[UILabel alloc] initWithFrame:CGRectMake(14, 12, 110, 24)];
+    badgeLabel.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.65];
+    badgeLabel.layer.cornerRadius = 12.0f;
+    badgeLabel.clipsToBounds = YES;
+    badgeLabel.text = @"LIVE PREVIEW";
+    badgeLabel.textAlignment = NSTextAlignmentCenter;
+    badgeLabel.font = [UIFont boldSystemFontOfSize:10];
+    badgeLabel.textColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
+    [self.previewContainer addSubview:badgeLabel];
+    
+    UIView *tableHeader = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, previewHeight + 24)];
+    [tableHeader addSubview:self.previewContainer];
+    
+    [self updatePreviewDisplay];
+    self.tableView.tableHeaderView = tableHeader;
+}
+
+- (void)setupTableView {
+    UITableViewStyle style = UITableViewStyleInsetGrouped;
     self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:style];
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.tableView.backgroundColor = [UIColor colorWithRed:0.07 green:0.07 blue:0.07 alpha:1.0];
-    self.tableView.separatorColor = [UIColor colorWithWhite:0.2 alpha:1.0];
+    self.tableView.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.07 alpha:1.0];
+    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.08];
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
     
+    [self setupHeaderPreview];
     [self.view addSubview:self.tableView];
 }
 
@@ -133,43 +160,58 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     [self.view addSubview:self.activityIndicator];
 }
 
-#pragma mark - UITableViewDataSource
+- (void)updatePreviewDisplay {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    UIImage *img = [SPTImageRenderer loadSavedImage];
+    self.previewImageView.image = img;
+    
+    BOOL blurOn = [defaults objectForKey:kEeveeThemeBlurEnabledKey] ? [defaults boolForKey:kEeveeThemeBlurEnabledKey] : YES;
+    float blurAlpha = [defaults objectForKey:kEeveeThemeBlurAlphaKey] ? [defaults floatForKey:kEeveeThemeBlurAlphaKey] : 0.65f;
+    NSInteger blurStyle = [defaults integerForKey:kEeveeThemeBlurStyleKey];
+    
+    if (blurOn) {
+        UIBlurEffectStyle style = UIBlurEffectStyleDark;
+        if (@available(iOS 13.0, *)) {
+            switch (blurStyle) {
+                case 0: style = UIBlurEffectStyleSystemUltraThinMaterialDark; break;
+                case 1: style = UIBlurEffectStyleSystemThinMaterialDark; break;
+                case 2: style = UIBlurEffectStyleDark; break;
+                case 3: style = UIBlurEffectStyleRegular; break;
+                default: style = UIBlurEffectStyleDark; break;
+            }
+        }
+        self.previewBlurView.effect = [UIBlurEffect effectWithStyle:style];
+        self.previewBlurView.alpha = blurAlpha;
+        self.previewBlurView.hidden = NO;
+    } else {
+        self.previewBlurView.hidden = YES;
+    }
+}
+
+#pragma mark - Table View Data Source
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 5;
+    return 4;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     switch (section) {
         case 0: return 1; // Master Switch
-        case 1: return 2; // Media Mode, Select Media
-        case 2: return 2; // Blur Toggle, Blur Style
-        case 3: return 2; // Background Opacity, Blur Alpha
-        case 4: return 2; // Apply, Clear Media
+        case 1: return 2; // Media Mode, Choose Media
+        case 2: return 4; // Blur Switch, Style, Opacity, Blur Alpha
+        case 3: return 2; // Apply, Clear Cache
         default: return 0;
     }
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     switch (section) {
-        case 0: return @"General";
-        case 1: return @"Background Media";
-        case 2: return @"Blur Overlay";
-        case 3: return @"Transparency Controls";
-        case 4: return @"Actions";
+        case 0: return @"Master Switch";
+        case 1: return @"Media Background";
+        case 2: return @"Glassmorphism & Overlay";
+        case 3: return @"Engine Actions";
         default: return nil;
     }
-}
-
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if (section == 0) {
-        return @"Enable or disable custom background rendering across Spotify.";
-    } else if (section == 1) {
-        return @"Supports static images, animated GIFs, and looping MP4/MOV videos.";
-    } else if (section == 4) {
-        return @"Tap Apply to synchronize changes with active playback views.";
-    }
-    return nil;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -177,16 +219,17 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:reuseID];
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:reuseID];
-        cell.backgroundColor = [UIColor colorWithRed:0.12 green:0.12 blue:0.12 alpha:1.0];
+        cell.backgroundColor = [UIColor colorWithRed:0.11 green:0.11 blue:0.13 alpha:0.95];
         cell.textLabel.textColor = [UIColor whiteColor];
-        cell.detailTextLabel.textColor = [UIColor lightGrayColor];
+        cell.textLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.65 alpha:1.0];
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     }
     
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     
     if (indexPath.section == 0 && indexPath.row == 0) {
-        cell.textLabel.text = @"Enable Custom Theme";
+        cell.textLabel.text = @"Activate Custom Theme";
         if (!self.masterSwitch) {
             self.masterSwitch = [[UISwitch alloc] init];
             self.masterSwitch.onTintColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
@@ -194,32 +237,31 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
         }
         self.masterSwitch.on = [defaults boolForKey:kEeveeThemeEnabledKey];
         cell.accessoryView = self.masterSwitch;
-    }
-    else if (indexPath.section == 1 && indexPath.row == 0) {
-        cell.textLabel.text = @"Media Type";
+    } else if (indexPath.section == 1 && indexPath.row == 0) {
+        cell.textLabel.text = @"Media Engine";
         if (!self.modeControl) {
-            NSArray *items = @[@"Color", @"Image", @"GIF", @"Video"];
+            NSArray *items = @[@"Image", @"GIF", @"Video"];
             self.modeControl = [[UISegmentedControl alloc] initWithItems:items];
             if (@available(iOS 13.0, *)) {
                 self.modeControl.selectedSegmentTintColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
+                [self.modeControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor blackColor], NSFontAttributeName: [UIFont boldSystemFontOfSize:12]} forState:UIControlStateSelected];
+                [self.modeControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor], NSFontAttributeName: [UIFont systemFontOfSize:12]} forState:UIControlStateNormal];
             }
             [self.modeControl addTarget:self action:@selector(modeControlChanged:) forControlEvents:UIControlEventValueChanged];
         }
         NSInteger currentMode = [defaults integerForKey:kEeveeThemeModeKey];
-        if (currentMode >= 1 && currentMode <= 4) {
-            self.modeControl.selectedSegmentIndex = currentMode - 1;
+        if (currentMode >= 2 && currentMode <= 4) {
+            self.modeControl.selectedSegmentIndex = currentMode - 2;
         } else {
-            self.modeControl.selectedSegmentIndex = 1;
+            self.modeControl.selectedSegmentIndex = 0;
         }
         cell.accessoryView = self.modeControl;
-    }
-    else if (indexPath.section == 1 && indexPath.row == 1) {
-        cell.textLabel.text = @"Choose Media from Library";
+    } else if (indexPath.section == 1 && indexPath.row == 1) {
+        cell.textLabel.text = @"Choose Media from Photos";
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         cell.accessoryView = nil;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-    }
-    else if (indexPath.section == 2 && indexPath.row == 0) {
+    } else if (indexPath.section == 2 && indexPath.row == 0) {
         cell.textLabel.text = @"Enable Glass Blur";
         if (!self.blurSwitch) {
             self.blurSwitch = [[UISwitch alloc] init];
@@ -228,26 +270,26 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
         }
         self.blurSwitch.on = [defaults objectForKey:kEeveeThemeBlurEnabledKey] ? [defaults boolForKey:kEeveeThemeBlurEnabledKey] : YES;
         cell.accessoryView = self.blurSwitch;
-    }
-    else if (indexPath.section == 2 && indexPath.row == 1) {
-        cell.textLabel.text = @"Blur Style";
+    } else if (indexPath.section == 2 && indexPath.row == 1) {
+        cell.textLabel.text = @"Glass Style";
         if (!self.blurStyleControl) {
-            NSArray *styles = @[@"UltraThin", @"Thin", @"Regular", @"Dark"];
+            NSArray *styles = @[@"UltraThin", @"Thin", @"Dark", @"Regular"];
             self.blurStyleControl = [[UISegmentedControl alloc] initWithItems:styles];
             if (@available(iOS 13.0, *)) {
                 self.blurStyleControl.selectedSegmentTintColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
+                [self.blurStyleControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor blackColor], NSFontAttributeName: [UIFont boldSystemFontOfSize:11]} forState:UIControlStateSelected];
+                [self.blurStyleControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor], NSFontAttributeName: [UIFont systemFontOfSize:11]} forState:UIControlStateNormal];
             }
             [self.blurStyleControl addTarget:self action:@selector(blurStyleControlChanged:) forControlEvents:UIControlEventValueChanged];
         }
         self.blurStyleControl.selectedSegmentIndex = [defaults integerForKey:kEeveeThemeBlurStyleKey];
         cell.accessoryView = self.blurStyleControl;
-    }
-    else if (indexPath.section == 3 && indexPath.row == 0) {
-        cell.textLabel.text = @"Background Opacity";
+    } else if (indexPath.section == 2 && indexPath.row == 2) {
+        cell.textLabel.text = @"Background Lightness";
         UIView *container = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 180, 30)];
         if (!self.opacitySlider) {
-            self.opacitySlider = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 130, 30)];
-            self.opacitySlider.minimumValue = 0.05f;
+            self.opacitySlider = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 125, 30)];
+            self.opacitySlider.minimumValue = 0.10f;
             self.opacitySlider.maximumValue = 1.0f;
             self.opacitySlider.minimumTrackTintColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
             [self.opacitySlider addTarget:self action:@selector(opacitySliderChanged:) forControlEvents:UIControlEventValueChanged];
@@ -257,53 +299,48 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
         [container addSubview:self.opacitySlider];
         
         if (!self.opacityValueLabel) {
-            self.opacityValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(135, 0, 45, 30)];
-            self.opacityValueLabel.textColor = [UIColor lightGrayColor];
-            self.opacityValueLabel.font = [UIFont systemFontOfSize:13];
+            self.opacityValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(130, 0, 50, 30)];
+            self.opacityValueLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
+            self.opacityValueLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
             self.opacityValueLabel.textAlignment = NSTextAlignmentRight;
         }
         self.opacityValueLabel.text = [NSString stringWithFormat:@"%.0f%%", op * 100];
         [container addSubview:self.opacityValueLabel];
-        
         cell.accessoryView = container;
-    }
-    else if (indexPath.section == 3 && indexPath.row == 1) {
-        cell.textLabel.text = @"Blur Alpha";
+    } else if (indexPath.section == 2 && indexPath.row == 3) {
+        cell.textLabel.text = @"Blur Intensity";
         UIView *container = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 180, 30)];
         if (!self.blurAlphaSlider) {
-            self.blurAlphaSlider = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 130, 30)];
+            self.blurAlphaSlider = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 125, 30)];
             self.blurAlphaSlider.minimumValue = 0.0f;
             self.blurAlphaSlider.maximumValue = 1.0f;
             self.blurAlphaSlider.minimumTrackTintColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
             [self.blurAlphaSlider addTarget:self action:@selector(blurAlphaSliderChanged:) forControlEvents:UIControlEventValueChanged];
         }
-        float ba = [defaults objectForKey:kEeveeThemeBlurAlphaKey] ? [defaults floatForKey:kEeveeThemeBlurAlphaKey] : 0.70f;
+        float ba = [defaults objectForKey:kEeveeThemeBlurAlphaKey] ? [defaults floatForKey:kEeveeThemeBlurAlphaKey] : 0.65f;
         self.blurAlphaSlider.value = ba;
         [container addSubview:self.blurAlphaSlider];
         
         if (!self.blurAlphaValueLabel) {
-            self.blurAlphaValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(135, 0, 45, 30)];
-            self.blurAlphaValueLabel.textColor = [UIColor lightGrayColor];
-            self.blurAlphaValueLabel.font = [UIFont systemFontOfSize:13];
+            self.blurAlphaValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(130, 0, 50, 30)];
+            self.blurAlphaValueLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
+            self.blurAlphaValueLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
             self.blurAlphaValueLabel.textAlignment = NSTextAlignmentRight;
         }
         self.blurAlphaValueLabel.text = [NSString stringWithFormat:@"%.0f%%", ba * 100];
         [container addSubview:self.blurAlphaValueLabel];
-        
         cell.accessoryView = container;
-    }
-    else if (indexPath.section == 4 && indexPath.row == 0) {
+    } else if (indexPath.section == 3 && indexPath.row == 0) {
         cell.textLabel.text = @"Apply Changes";
         cell.textLabel.textColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
         cell.textLabel.font = [UIFont boldSystemFontOfSize:16];
         cell.textLabel.textAlignment = NSTextAlignmentCenter;
         cell.accessoryView = nil;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-    }
-    else if (indexPath.section == 4 && indexPath.row == 1) {
+    } else if (indexPath.section == 3 && indexPath.row == 1) {
         cell.textLabel.text = @"Clear Cached Media";
-        cell.textLabel.textColor = [UIColor colorWithRed:0.95 green:0.25 blue:0.25 alpha:1.0];
-        cell.textLabel.font = [UIFont systemFontOfSize:15];
+        cell.textLabel.textColor = [UIColor colorWithRed:0.95 green:0.30 blue:0.30 alpha:1.0];
+        cell.textLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
         cell.textLabel.textAlignment = NSTextAlignmentCenter;
         cell.accessoryView = nil;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
@@ -312,16 +349,17 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     return cell;
 }
 
-#pragma mark - UITableViewDelegate
+#pragma mark - Table View Delegate
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     
     if (indexPath.section == 1 && indexPath.row == 1) {
         [self presentMediaPicker];
-    } else if (indexPath.section == 4 && indexPath.row == 0) {
+    } else if (indexPath.section == 3 && indexPath.row == 0) {
+        [self.hapticFeedback impactOccurred];
         [self applyThemeSettings];
-    } else if (indexPath.section == 4 && indexPath.row == 1) {
+    } else if (indexPath.section == 3 && indexPath.row == 1) {
         [self clearMediaAction];
     }
 }
@@ -355,17 +393,11 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     [picker dismissViewControllerAnimated:YES completion:nil];
     
     NSString *mediaType = info[UIImagePickerControllerMediaType];
-    if (!mediaType) {
-        return;
-    }
+    if (!mediaType) return;
     
     NSURL *mediaURL = info[UIImagePickerControllerMediaURL];
     NSURL *imageURL = info[UIImagePickerControllerImageURL];
     UIImage *originalImage = info[UIImagePickerControllerOriginalImage];
-    
-    BOOL isGIF = NO;
-    BOOL isVideo = NO;
-    BOOL isImage = NO;
     
     UTType *resolvedType = [UTType typeWithIdentifier:mediaType];
     if (!resolvedType) {
@@ -375,31 +407,24 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
         }
     }
     
+    BOOL isGIF = NO;
+    BOOL isVideo = NO;
+    
     if (resolvedType) {
-        if ([resolvedType conformsToType:UTTypeGIF]) {
-            isGIF = YES;
-        } else if ([resolvedType conformsToType:UTTypeMovie] || [resolvedType conformsToType:UTTypeVideo]) {
-            isVideo = YES;
-        } else if ([resolvedType conformsToType:UTTypeImage]) {
-            isImage = YES;
-        }
+        if ([resolvedType conformsToType:UTTypeGIF]) isGIF = YES;
+        else if ([resolvedType conformsToType:UTTypeMovie] || [resolvedType conformsToType:UTTypeVideo]) isVideo = YES;
     } else {
         NSString *typeLower = mediaType.lowercaseString;
         NSString *extLower = (mediaURL ?: imageURL).pathExtension.lowercaseString;
-        if ([typeLower containsString:@"gif"] || [extLower isEqualToString:@"gif"]) {
-            isGIF = YES;
-        } else if ([typeLower containsString:@"movie"] || [typeLower containsString:@"video"] || [extLower isEqualToString:@"mp4"] || [extLower isEqualToString:@"mov"]) {
-            isVideo = YES;
-        } else {
-            isImage = YES;
-        }
+        if ([typeLower containsString:@"gif"] || [extLower isEqualToString:@"gif"]) isGIF = YES;
+        else if ([typeLower containsString:@"movie"] || [typeLower containsString:@"video"] || [extLower isEqualToString:@"mp4"] || [extLower isEqualToString:@"mov"]) isVideo = YES;
     }
     
     if (isGIF) {
         [self processPickedGIFWithURL:(imageURL ?: mediaURL) fallbackImage:originalImage];
     } else if (isVideo) {
         [self processPickedVideoWithURL:mediaURL];
-    } else if (isImage || originalImage) {
+    } else {
         [self processPickedImage:originalImage imageURL:imageURL];
     }
 }
@@ -408,19 +433,14 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     [picker dismissViewControllerAnimated:YES completion:nil];
 }
 
-#pragma mark - Media Processing Handlers
+#pragma mark - Process Media
 
 - (void)processPickedGIFWithURL:(NSURL *)gifURL fallbackImage:(UIImage *)image {
     [self.activityIndicator startAnimating];
     
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSData *data = nil;
-        if (gifURL) {
-            data = [NSData dataWithContentsOfURL:gifURL];
-        }
-        if (!data && image) {
-            data = UIImagePNGRepresentation(image);
-        }
+        NSData *data = gifURL ? [NSData dataWithContentsOfURL:gifURL] : nil;
+        if (!data && image) data = UIImagePNGRepresentation(image);
         
         if (data && data.length > 0) {
             [ThemeSettingsViewController removeSavedMediaFiles];
@@ -429,37 +449,33 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
             
             dispatch_async(dispatch_get_main_queue(), ^{
                 NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-                [defaults setInteger:3 forKey:kEeveeThemeModeKey]; // 3: GIF
+                [defaults setInteger:EeveeThemeModeGIF forKey:kEeveeThemeModeKey];
                 [defaults setObject:@"gif" forKey:kEeveeThemeExtensionKey];
+                [defaults setBool:YES forKey:kEeveeThemeEnabledKey];
                 [defaults synchronize];
                 
                 [self.activityIndicator stopAnimating];
+                [self updatePreviewDisplay];
                 [self.tableView reloadData];
                 [self applyThemeSettings];
-                [self displayAlertWithTitle:@"Success" message:@"GIF background successfully updated."];
             });
         } else {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self.activityIndicator stopAnimating];
-                [self displayAlertWithTitle:@"Error" message:@"Failed to process GIF data."];
+                [self displayAlertWithTitle:@"Error" message:@"Failed to process GIF file."];
             });
         }
     });
 }
 
 - (void)processPickedVideoWithURL:(NSURL *)videoURL {
-    if (!videoURL) {
-        [self displayAlertWithTitle:@"Error" message:@"Invalid video path."];
-        return;
-    }
+    if (!videoURL) return;
     
     [self.activityIndicator startAnimating];
     
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *ext = videoURL.pathExtension.lowercaseString;
-        if (ext.length == 0) {
-            ext = @"mp4";
-        }
+        if (ext.length == 0) ext = @"mp4";
         
         [ThemeSettingsViewController removeSavedMediaFiles];
         NSString *targetPath = [[ThemeSettingsViewController themeMediaDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.%@", kEeveeThemeMediaFileName, ext]];
@@ -469,7 +485,6 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
         
         NSError *error = nil;
         BOOL success = [fileManager copyItemAtURL:videoURL toURL:[NSURL fileURLWithPath:targetPath] error:&error];
-        
         if (!success) {
             NSData *videoData = [NSData dataWithContentsOfURL:videoURL];
             success = [videoData writeToFile:targetPath atomically:YES];
@@ -479,13 +494,14 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
             [self.activityIndicator stopAnimating];
             if (success) {
                 NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-                [defaults setInteger:4 forKey:kEeveeThemeModeKey]; // 4: Video
+                [defaults setInteger:EeveeThemeModeVideo forKey:kEeveeThemeModeKey];
                 [defaults setObject:ext forKey:kEeveeThemeExtensionKey];
+                [defaults setBool:YES forKey:kEeveeThemeEnabledKey];
                 [defaults synchronize];
                 
+                [self updatePreviewDisplay];
                 [self.tableView reloadData];
                 [self applyThemeSettings];
-                [self displayAlertWithTitle:@"Success" message:@"Video background successfully configured."];
             } else {
                 [self displayAlertWithTitle:@"Error" message:@"Failed to save video media."];
             }
@@ -494,18 +510,12 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
 }
 
 - (void)processPickedImage:(UIImage *)image imageURL:(NSURL *)imageURL {
-    if (!image) {
-        return;
-    }
+    if (!image) return;
     
     [self.activityIndicator startAnimating];
     
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSData *imageData = UIImageJPEGRepresentation(image, 0.90f);
-        if (!imageData) {
-            imageData = UIImagePNGRepresentation(image);
-        }
-        
+        NSData *imageData = UIImageJPEGRepresentation(image, 0.92f) ?: UIImagePNGRepresentation(image);
         if (imageData && imageData.length > 0) {
             [ThemeSettingsViewController removeSavedMediaFiles];
             NSString *targetPath = [[ThemeSettingsViewController themeMediaDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.png", kEeveeThemeMediaFileName]];
@@ -513,27 +523,29 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
             
             dispatch_async(dispatch_get_main_queue(), ^{
                 NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-                [defaults setInteger:2 forKey:kEeveeThemeModeKey]; // 2: Image
+                [defaults setInteger:EeveeThemeModeImage forKey:kEeveeThemeModeKey];
                 [defaults setObject:@"png" forKey:kEeveeThemeExtensionKey];
+                [defaults setBool:YES forKey:kEeveeThemeEnabledKey];
                 [defaults synchronize];
                 
                 [self.activityIndicator stopAnimating];
+                [self updatePreviewDisplay];
                 [self.tableView reloadData];
                 [self applyThemeSettings];
-                [self displayAlertWithTitle:@"Success" message:@"Static background image applied."];
             });
         } else {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self.activityIndicator stopAnimating];
-                [self displayAlertWithTitle:@"Error" message:@"Failed to serialize selected image."];
+                [self displayAlertWithTitle:@"Error" message:@"Failed to serialize image."];
             });
         }
     });
 }
 
-#pragma mark - Actions & Target Events
+#pragma mark - Actions
 
 - (void)masterSwitchChanged:(UISwitch *)sender {
+    [self.hapticFeedback impactOccurred];
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setBool:sender.isOn forKey:kEeveeThemeEnabledKey];
     [defaults synchronize];
@@ -541,23 +553,28 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
 }
 
 - (void)modeControlChanged:(UISegmentedControl *)sender {
+    [self.hapticFeedback impactOccurred];
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    [defaults setInteger:(sender.selectedSegmentIndex + 1) forKey:kEeveeThemeModeKey];
+    [defaults setInteger:(sender.selectedSegmentIndex + 2) forKey:kEeveeThemeModeKey];
     [defaults synchronize];
     [self applyThemeSettings];
 }
 
 - (void)blurSwitchChanged:(UISwitch *)sender {
+    [self.hapticFeedback impactOccurred];
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setBool:sender.isOn forKey:kEeveeThemeBlurEnabledKey];
     [defaults synchronize];
+    [self updatePreviewDisplay];
     [self applyThemeSettings];
 }
 
 - (void)blurStyleControlChanged:(UISegmentedControl *)sender {
+    [self.hapticFeedback impactOccurred];
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setInteger:sender.selectedSegmentIndex forKey:kEeveeThemeBlurStyleKey];
     [defaults synchronize];
+    [self updatePreviewDisplay];
     [self applyThemeSettings];
 }
 
@@ -565,23 +582,21 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setFloat:sender.value forKey:kEeveeThemeOpacityKey];
     [defaults synchronize];
-    if (self.opacityValueLabel) {
-        self.opacityValueLabel.text = [NSString stringWithFormat:@"%.0f%%", sender.value * 100];
-    }
+    self.opacityValueLabel.text = [NSString stringWithFormat:@"%.0f%%", sender.value * 100];
+    [self applyThemeSettings];
 }
 
 - (void)blurAlphaSliderChanged:(UISlider *)sender {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setFloat:sender.value forKey:kEeveeThemeBlurAlphaKey];
     [defaults synchronize];
-    if (self.blurAlphaValueLabel) {
-        self.blurAlphaValueLabel.text = [NSString stringWithFormat:@"%.0f%%", sender.value * 100];
-    }
+    self.blurAlphaValueLabel.text = [NSString stringWithFormat:@"%.0f%%", sender.value * 100];
+    [self updatePreviewDisplay];
+    [self applyThemeSettings];
 }
 
 - (void)clearMediaAction {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Clear Media" message:@"Do you want to remove the stored custom background media?" preferredStyle:UIAlertControllerStyleAlert];
-    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Clear Media" message:@"Remove saved background media?" preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Clear" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         [ThemeSettingsViewController removeSavedMediaFiles];
@@ -589,32 +604,21 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
         [defaults setInteger:0 forKey:kEeveeThemeModeKey];
         [defaults removeObjectForKey:kEeveeThemeExtensionKey];
         [defaults synchronize];
+        [self updatePreviewDisplay];
         [self.tableView reloadData];
         [self applyThemeSettings];
     }]];
-    
     [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)applyThemeSettings {
     [[NSNotificationCenter defaultCenter] postNotificationName:kEeveeThemeChangedNotification object:nil];
     [[NSNotificationCenter defaultCenter] postNotificationName:kEeveeThemeReloadNotification object:nil];
-    
-    Class managerClass = NSClassFromString(@"SPTCustomThemeManager");
-    if (managerClass && [managerClass respondsToSelector:@selector(sharedInstance)]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        id manager = [managerClass performSelector:@selector(sharedInstance)];
-        if ([manager respondsToSelector:@selector(applyTheme)]) {
-            [manager performSelector:@selector(applyTheme)];
-        }
-#pragma clang diagnostic pop
-    }
+    [[SPTCustomThemeManager sharedInstance] applyTheme];
 }
 
 - (void)resetThemeSettings {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Reset All Settings" message:@"Reset all custom theme options to their default values?" preferredStyle:UIAlertControllerStyleAlert];
-    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Reset" message:@"Restore default theme options?" preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Reset" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -629,20 +633,16 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
         [defaults synchronize];
         
         [ThemeSettingsViewController removeSavedMediaFiles];
+        [self updatePreviewDisplay];
         [self.tableView reloadData];
         [self applyThemeSettings];
     }]];
-    
     [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)doneAction {
     [self applyThemeSettings];
-    if (self.presentingViewController) {
-        [self dismissViewControllerAnimated:YES completion:nil];
-    } else if (self.navigationController) {
-        [self.navigationController popViewControllerAnimated:YES];
-    }
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 - (void)displayAlertWithTitle:(NSString *)title message:(NSString *)message {
