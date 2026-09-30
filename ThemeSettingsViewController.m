@@ -1,5 +1,4 @@
 #import "ThemeSettingsViewController.h"
-#import <MobileCoreServices/MobileCoreServices.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <PhotosUI/PhotosUI.h>
 #import <AVFoundation/AVFoundation.h>
@@ -342,23 +341,14 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     pickerController.delegate = self;
     pickerController.modalPresentationStyle = UIModalPresentationFullScreen;
     
-    NSMutableArray *types = [NSMutableArray array];
+    // Modern iOS 14+ UniformTypeIdentifiers constants (replaces deprecated kUTType*)
+    pickerController.mediaTypes = @[
+        UTTypeImage.identifier,
+        UTTypeGIF.identifier,
+        UTTypeMovie.identifier,
+        UTTypeVideo.identifier
+    ];
     
-    if (@available(iOS 14.0, *)) {
-        [types addObject:UTTypeImage.identifier];
-        [types addObject:UTTypeGIF.identifier];
-        [types addObject:UTTypeMovie.identifier];
-        [types addObject:UTTypeVideo.identifier];
-    }
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    if (kUTTypeImage) [types addObject:(__bridge NSString *)kUTTypeImage];
-    if (kUTTypeGIF)   [types addObject:(__bridge NSString *)kUTTypeGIF];
-    if (kUTTypeMovie) [types addObject:(__bridge NSString *)kUTTypeMovie];
-    if (kUTTypeVideo) [types addObject:(__bridge NSString *)kUTTypeVideo];
-#pragma clang diagnostic pop
-    
-    pickerController.mediaTypes = [types valueForKeyPath:@"@distinctUnionOfObjects.self"];
     [self presentViewController:pickerController animated:YES completion:nil];
 }
 
@@ -381,50 +371,39 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     BOOL isImage = NO;
     
     // Modern iOS 14.0+ UniformTypeIdentifiers evaluation
-    if (@available(iOS 14.0, *)) {
-        UTType *resolvedType = [UTType typeWithIdentifier:mediaType];
-        if (resolvedType) {
-            if ([resolvedType conformsToType:UTTypeGIF]) {
-                isGIF = YES;
-            } else if ([resolvedType conformsToType:UTTypeMovie] || [resolvedType conformsToType:UTTypeVideo]) {
-                isVideo = YES;
-            } else if ([resolvedType conformsToType:UTTypeImage]) {
-                isImage = YES;
-            }
+    UTType *resolvedType = [UTType typeWithIdentifier:mediaType];
+    if (!resolvedType) {
+        NSURL *sourceURL = mediaURL ?: imageURL;
+        if (sourceURL.pathExtension.length > 0) {
+            resolvedType = [UTType typeWithFilenameExtension:sourceURL.pathExtension];
         }
     }
     
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-
-    // Line 282: GIF Conformance Check
-    if (UTTypeConformsTo((__bridge CFStringRef)mediaType, kUTTypeGIF) || isGIF) {
-        [self processPickedGIFWithURL:(imageURL ?: mediaURL) fallbackImage:originalImage];
-        return;
+    if (resolvedType) {
+        if ([resolvedType conformsToType:UTTypeGIF]) {
+            isGIF = YES;
+        } else if ([resolvedType conformsToType:UTTypeMovie] || [resolvedType conformsToType:UTTypeVideo]) {
+            isVideo = YES;
+        } else if ([resolvedType conformsToType:UTTypeImage]) {
+            isImage = YES;
+        }
+    } else {
+        NSString *typeLower = mediaType.lowercaseString;
+        NSString *extLower = (mediaURL ?: imageURL).pathExtension.lowercaseString;
+        if ([typeLower containsString:@"gif"] || [extLower isEqualToString:@"gif"]) {
+            isGIF = YES;
+        } else if ([typeLower containsString:@"movie"] || [typeLower containsString:@"video"] || [extLower isEqualToString:@"mp4"] || [extLower isEqualToString:@"mov"]) {
+            isVideo = YES;
+        } else {
+            isImage = YES;
+        }
     }
-
-    // Line 303: Movie / Video Conformance Check
-    if (UTTypeConformsTo((__bridge CFStringRef)mediaType, kUTTypeMovie) ||
-        UTTypeConformsTo((__bridge CFStringRef)mediaType, kUTTypeVideo) ||
-        isVideo) {
+    
+    if (isGIF) {
+        [self processPickedGIFWithURL:(imageURL ?: mediaURL) fallbackImage:originalImage];
+    } else if (isVideo) {
         [self processPickedVideoWithURL:mediaURL];
-        return;
-    }
-    // Line 309: Secondary GIF Verification
-    else if (UTTypeConformsTo((__bridge CFStringRef)mediaType, kUTTypeGIF) || isGIF) {
-        [self processPickedGIFWithURL:(imageURL ?: mediaURL) fallbackImage:originalImage];
-        return;
-    }
-    // Line 315: Static Image Conformance Check
-    else if (UTTypeConformsTo((__bridge CFStringRef)mediaType, kUTTypeImage) || isImage) {
-        [self processPickedImage:originalImage imageURL:imageURL];
-        return;
-    }
-
-#pragma clang diagnostic pop
-
-    // Direct fallback for image instance
-    if (originalImage) {
+    } else if (isImage || originalImage) {
         [self processPickedImage:originalImage imageURL:imageURL];
     }
 }
