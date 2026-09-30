@@ -1,10 +1,9 @@
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 #import "SPTCustomThemeManager.h"
 #import "SPTImageRenderer.h"
-
-#if __has_include("SPTFloatingActionButton.h")
 #import "SPTFloatingActionButton.h"
-#endif
+#import "ThemeSettingsViewController.h"
 
 // Fast inline helper to strip backgrounds from views
 static inline void StripOpaqueBackground(UIView *view) {
@@ -15,13 +14,27 @@ static inline void StripOpaqueBackground(UIView *view) {
     view.opaque = NO;
 }
 
-// 1. Hook UIWindow to insert background at index 0 and keep it at the very back
+// 1. Hook UIWindow to attach the background and the floating settings button
 %hook UIWindow
 
 - (void)makeKeyAndVisible {
     %orig;
     if ([SPTCustomThemeManager isCustomThemeActive]) {
         [[SPTCustomThemeManager sharedInstance] attachToWindow:self];
+    }
+    
+    // Attach the floating settings action button
+    [[SPTFloatingActionButton sharedInstance] attachToWindow:self];
+    
+    // Add two-finger double-tap gesture shortcut to open settings anytime
+    static char kThemeGestureKey;
+    if (!objc_getAssociatedObject(self, &kThemeGestureKey)) {
+        UITapGestureRecognizer *twoFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:[SPTFloatingActionButton sharedInstance] action:@selector(presentThemeSettings)];
+        twoFingerTap.numberOfTouchesRequired = 2;
+        twoFingerTap.numberOfTapsRequired = 2;
+        twoFingerTap.cancelsTouchesInView = NO;
+        [self addGestureRecognizer:twoFingerTap];
+        objc_setAssociatedObject(self, &kThemeGestureKey, @(YES), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 }
 
@@ -30,11 +43,21 @@ static inline void StripOpaqueBackground(UIView *view) {
     if ([SPTCustomThemeManager isCustomThemeActive]) {
         [[SPTCustomThemeManager sharedInstance] ensureAttachedToWindow:self];
     }
+    // Keep floating action button at the very front
+    [self bringSubviewToFront:[SPTFloatingActionButton sharedInstance]];
+}
+
+- (void)motionEnded:(UIEventSubtype)motion withEvent:(UIEvent *)event {
+    %orig;
+    // Shake gesture shortcut to immediately pop open theme settings
+    if (motion == UIEventSubtypeMotionShake) {
+        [[SPTFloatingActionButton sharedInstance] presentThemeSettings];
+    }
 }
 
 %end
 
-// 2. Hook UIViewController to eliminate opaque walls on Spotify's root, navigation, and content screens
+// 2. Hook UIViewController to eliminate opaque walls on Spotify's root and content screens
 %hook UIViewController
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -42,7 +65,6 @@ static inline void StripOpaqueBackground(UIView *view) {
     if ([SPTCustomThemeManager isCustomThemeActive]) {
         NSString *className = NSStringFromClass([self class]);
         
-        // Match Spotify's container and page view controller hierarchies
         if ([className containsString:@"SPT"] ||
             [className containsString:@"Root"] ||
             [className containsString:@"Navigation"] ||
@@ -58,6 +80,12 @@ static inline void StripOpaqueBackground(UIView *view) {
         }
         
         [[SPTCustomThemeManager sharedInstance] ensureAttached];
+    }
+    
+    // Ensure the button stays attached to the active window
+    UIWindow *win = self.view.window ?: [UIApplication sharedApplication].keyWindow;
+    if (win) {
+        [[SPTFloatingActionButton sharedInstance] attachToWindow:win];
     }
 }
 
@@ -77,7 +105,7 @@ static inline void StripOpaqueBackground(UIView *view) {
 
 %end
 
-// 3. Hook UICollectionView & UITableView to make playlists, albums, and home feeds transparent
+// 3. Hook UICollectionView & UITableView to make playlists, albums, and feeds transparent
 %hook UICollectionView
 
 - (void)layoutSubviews {
@@ -114,7 +142,7 @@ static inline void StripOpaqueBackground(UIView *view) {
 
 %end
 
-// 4. Hook Collection & Table cells to ensure individual rows don't paint solid dark boxes
+// 4. Hook Collection & Table cells
 %hook UICollectionViewCell
 
 - (void)didMoveToWindow {
@@ -149,7 +177,6 @@ static inline void StripOpaqueBackground(UIView *view) {
     if ([SPTCustomThemeManager isCustomThemeActive]) {
         NSString *className = NSStringFromClass([self class]);
         
-        // Remove gradient overlays masking the custom background
         if ([className containsString:@"GLUEGradient"] ||
             [className containsString:@"SPTNowPlayingBackgroundView"] ||
             [className isEqualToString:@"SPTPageContainerView"] ||
@@ -167,7 +194,7 @@ static inline void StripOpaqueBackground(UIView *view) {
 
 %end
 
-// 6. Hook Application Did Launch to initialize the theme engine early
+// 6. Hook Application Launch to initialize both managers early
 %hook SpotifyAppDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
@@ -175,7 +202,11 @@ static inline void StripOpaqueBackground(UIView *view) {
     
     dispatch_async(dispatch_get_main_queue(), ^{
         [[SPTCustomThemeManager sharedInstance] setup];
-        [[SPTCustomThemeManager sharedInstance] ensureAttached];
+        UIWindow *win = [UIApplication sharedApplication].keyWindow ?: [UIApplication sharedApplication].windows.firstObject;
+        if (win) {
+            [[SPTCustomThemeManager sharedInstance] attachToWindow:win];
+            [[SPTFloatingActionButton sharedInstance] attachToWindow:win];
+        }
     });
     
     return result;
