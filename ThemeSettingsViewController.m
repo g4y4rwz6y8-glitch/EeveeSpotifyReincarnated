@@ -6,22 +6,20 @@
 
 #if __has_include("SPTCustomThemeManager.h")
 #import "SPTCustomThemeManager.h"
-#endif
-
-// UserDefaults Persistence Keys
-static NSString *const kEeveeThemeEnabledKey      = @"EeveeTheme_Enabled";
-static NSString *const kEeveeThemeModeKey         = @"EeveeTheme_Mode"; // 0: None, 1: Color, 2: Image, 3: GIF, 4: Video
-static NSString *const kEeveeThemeBlurEnabledKey  = @"EeveeTheme_BlurEnabled";
-static NSString *const kEeveeThemeBlurStyleKey    = @"EeveeTheme_BlurStyle"; // 0: UltraThin, 1: Thin, 2: Regular, 3: Dark
-static NSString *const kEeveeThemeOpacityKey      = @"EeveeTheme_Opacity"; // float 0.0 - 1.0
-static NSString *const kEeveeThemeBlurAlphaKey    = @"EeveeTheme_BlurAlpha"; // float 0.0 - 1.0
-static NSString *const kEeveeThemeHexColorKey     = @"EeveeTheme_HexColor";
-static NSString *const kEeveeThemeExtensionKey    = @"EeveeTheme_MediaExtension";
-static NSString *const kEeveeThemeMediaFileName   = @"custom_theme_media";
-
-// Notification Identifiers
+#else
+// Fallback definitions only if SPTCustomThemeManager.h is not found
+static NSString *const kEeveeThemeEnabledKey          = @"EeveeTheme_Enabled";
+static NSString *const kEeveeThemeModeKey             = @"EeveeTheme_Mode"; // 0: None, 1: Color, 2: Image, 3: GIF, 4: Video
+static NSString *const kEeveeThemeBlurEnabledKey      = @"EeveeTheme_BlurEnabled";
+static NSString *const kEeveeThemeBlurStyleKey        = @"EeveeTheme_BlurStyle"; // 0: UltraThin, 1: Thin, 2: Regular, 3: Dark
+static NSString *const kEeveeThemeOpacityKey          = @"EeveeTheme_Opacity"; // float 0.0 - 1.0
+static NSString *const kEeveeThemeBlurAlphaKey        = @"EeveeTheme_BlurAlpha"; // float 0.0 - 1.0
+static NSString *const kEeveeThemeHexColorKey         = @"EeveeTheme_HexColor";
+static NSString *const kEeveeThemeExtensionKey        = @"EeveeTheme_MediaExtension";
+static NSString *const kEeveeThemeMediaFileName       = @"custom_theme_media";
 static NSString *const kEeveeThemeChangedNotification = @"SPTThemeSettingsChangedNotification";
 static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotification";
+#endif
 
 @interface ThemeSettingsViewController ()
 
@@ -341,7 +339,6 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     pickerController.delegate = self;
     pickerController.modalPresentationStyle = UIModalPresentationFullScreen;
     
-    // Modern iOS 14+ UniformTypeIdentifiers constants (replaces deprecated kUTType*)
     pickerController.mediaTypes = @[
         UTTypeImage.identifier,
         UTTypeGIF.identifier,
@@ -370,7 +367,6 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
     BOOL isVideo = NO;
     BOOL isImage = NO;
     
-    // Modern iOS 14.0+ UniformTypeIdentifiers evaluation
     UTType *resolvedType = [UTType typeWithIdentifier:mediaType];
     if (!resolvedType) {
         NSURL *sourceURL = mediaURL ?: imageURL;
@@ -601,11 +597,9 @@ static NSString *const kEeveeThemeReloadNotification  = @"EeveeThemeReloadNotifi
 }
 
 - (void)applyThemeSettings {
-    // Notify custom theme managers and renderers via NSNotificationCenter
     [[NSNotificationCenter defaultCenter] postNotificationName:kEeveeThemeChangedNotification object:nil];
     [[NSNotificationCenter defaultCenter] postNotificationName:kEeveeThemeReloadNotification object:nil];
     
-    // Direct invocation if SPTCustomThemeManager exists at runtime
     Class managerClass = NSClassFromString(@"SPTCustomThemeManager");
     if (managerClass && [managerClass respondsToSelector:@selector(sharedInstance)]) {
 #pragma clang diagnostic push
