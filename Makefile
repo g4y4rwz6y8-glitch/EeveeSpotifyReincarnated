@@ -15,7 +15,7 @@ EeveeSpotify_FILES = $(wildcard *.x) $(wildcard *.xm) $(wildcard *.m) $(wildcard
 # ARC enabled, suppress legacy symbol deprecation warnings on iOS 17.5+ SDK
 EeveeSpotify_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-function -Wno-nullability-completeness
 
-# Link MobileCoreServices and UniformTypeIdentifiers to satisfy UTTypeConformsTo and modern UTType symbols
+# System frameworks required by the tweak and theme engine
 EeveeSpotify_FRAMEWORKS = UIKit \
                           Foundation \
                           CoreGraphics \
@@ -28,7 +28,16 @@ EeveeSpotify_FRAMEWORKS = UIKit \
                           ImageIO \
                           CoreMedia
 
-EeveeSpotify_EXTRA_FRAMEWORKS = SwiftProtobuf
+# Only link SwiftProtobuf if the framework has actually been built and placed on disk
+ifneq ($(wildcard $(THEOS)/lib/SwiftProtobuf.framework),)
+EeveeSpotify_EXTRA_FRAMEWORKS += SwiftProtobuf
+else ifneq ($(wildcard ./SwiftProtobuf.framework),)
+EeveeSpotify_EXTRA_FRAMEWORKS += SwiftProtobuf
+EeveeSpotify_LDFLAGS += -F.
+else ifneq ($(wildcard ./swiftprotobuf/SwiftProtobuf.framework),)
+EeveeSpotify_EXTRA_FRAMEWORKS += SwiftProtobuf
+EeveeSpotify_LDFLAGS += -F./swiftprotobuf
+endif
 
 # Alias configuration for EeveeThemeEngine target compatibility
 EeveeThemeEngine_FILES = $(EeveeSpotify_FILES)
@@ -38,7 +47,7 @@ EeveeThemeEngine_EXTRA_FRAMEWORKS = $(EeveeSpotify_EXTRA_FRAMEWORKS)
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-# Support swiftprotobuf subproject if present in directory
+# Support swiftprotobuf subproject only if a Makefile exists inside swiftprotobuf/
 ifneq ($(wildcard swiftprotobuf/Makefile),)
 SUBPROJECTS += swiftprotobuf
 include $(THEOS_MAKE_PATH)/aggregate.mk
