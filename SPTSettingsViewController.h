@@ -1,4 +1,10 @@
 #import <UIKit/UIKit.h>
+#import "ThemeSettingsViewController.h"
 
-@interface SPTSettingsViewController : UIViewController
+NS_ASSUME_NONNULL_BEGIN
+
+@interface SPTSettingsViewController : ThemeSettingsViewController
+
 @end
+
+NS_ASSUME_NONNULL_END
