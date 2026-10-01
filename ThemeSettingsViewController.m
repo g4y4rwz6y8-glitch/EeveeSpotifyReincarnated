@@ -58,14 +58,13 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     
-    self.title = @"Eevee Theme Studio";
+    self.title = @"Liquid Glass Studio";
     self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.07 alpha:1.0];
     
     self.hapticFeedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
     [self.hapticFeedback prepare];
     
     [self setupNavigationItems];
-    [self setupHeaderPreview];
     [self setupTableView];
     [self setupActivityIndicator];
 }
@@ -196,19 +195,19 @@
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     switch (section) {
-        case 0: return 1; // Master Switch
-        case 1: return 2; // Media Mode, Choose Media
-        case 2: return 4; // Blur Switch, Style, Opacity, Blur Alpha
-        case 3: return 2; // Apply, Clear Cache
+        case 0: return 1;
+        case 1: return 2;
+        case 2: return 4;
+        case 3: return 2;
         default: return 0;
     }
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     switch (section) {
-        case 0: return @"Master Switch";
-        case 1: return @"Media Background";
-        case 2: return @"Glassmorphism & Overlay";
+        case 0: return @"Master Configuration";
+        case 1: return @"Media Engine";
+        case 2: return @"Liquid Glass Overlays";
         case 3: return @"Engine Actions";
         default: return nil;
     }
@@ -229,7 +228,7 @@
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     
     if (indexPath.section == 0 && indexPath.row == 0) {
-        cell.textLabel.text = @"Activate Custom Theme";
+        cell.textLabel.text = @"Activate Liquid Glass";
         if (!self.masterSwitch) {
             self.masterSwitch = [[UISwitch alloc] init];
             self.masterSwitch.onTintColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
@@ -238,7 +237,7 @@
         self.masterSwitch.on = [defaults boolForKey:kEeveeThemeEnabledKey];
         cell.accessoryView = self.masterSwitch;
     } else if (indexPath.section == 1 && indexPath.row == 0) {
-        cell.textLabel.text = @"Media Engine";
+        cell.textLabel.text = @"Format Mode";
         if (!self.modeControl) {
             NSArray *items = @[@"Image", @"GIF", @"Video"];
             self.modeControl = [[UISegmentedControl alloc] initWithItems:items];
@@ -257,12 +256,12 @@
         }
         cell.accessoryView = self.modeControl;
     } else if (indexPath.section == 1 && indexPath.row == 1) {
-        cell.textLabel.text = @"Choose Media from Photos";
+        cell.textLabel.text = @"Select Media from Library";
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         cell.accessoryView = nil;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     } else if (indexPath.section == 2 && indexPath.row == 0) {
-        cell.textLabel.text = @"Enable Glass Blur";
+        cell.textLabel.text = @"Enable Frosted Glass";
         if (!self.blurSwitch) {
             self.blurSwitch = [[UISwitch alloc] init];
             self.blurSwitch.onTintColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
@@ -308,7 +307,7 @@
         [container addSubview:self.opacityValueLabel];
         cell.accessoryView = container;
     } else if (indexPath.section == 2 && indexPath.row == 3) {
-        cell.textLabel.text = @"Blur Intensity";
+        cell.textLabel.text = @"Glass Intensity";
         UIView *container = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 180, 30)];
         if (!self.blurAlphaSlider) {
             self.blurAlphaSlider = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 125, 30)];
@@ -390,42 +389,50 @@
 #pragma mark - UIImagePickerControllerDelegate
 
 - (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
-    [picker dismissViewControllerAnimated:YES completion:nil];
-    
     NSString *mediaType = info[UIImagePickerControllerMediaType];
-    if (!mediaType) return;
-    
     NSURL *mediaURL = info[UIImagePickerControllerMediaURL];
     NSURL *imageURL = info[UIImagePickerControllerImageURL];
     UIImage *originalImage = info[UIImagePickerControllerOriginalImage];
     
-    UTType *resolvedType = [UTType typeWithIdentifier:mediaType];
-    if (!resolvedType) {
-        NSURL *sourceURL = mediaURL ?: imageURL;
-        if (sourceURL.pathExtension.length > 0) {
-            resolvedType = [UTType typeWithFilenameExtension:sourceURL.pathExtension];
+    // Read raw data immediately while security-scoped access is alive
+    NSData *pickedRawData = nil;
+    if (imageURL) {
+        pickedRawData = [NSData dataWithContentsOfURL:imageURL options:NSDataReadingMappedIfSafe error:nil];
+    } else if (mediaURL) {
+        pickedRawData = [NSData dataWithContentsOfURL:mediaURL options:NSDataReadingMappedIfSafe error:nil];
+    }
+    
+    // Check GIF magic bytes (GIF87a / GIF89a)
+    BOOL isGIF = NO;
+    if (pickedRawData && pickedRawData.length >= 6) {
+        const char *bytes = (const char *)pickedRawData.bytes;
+        if (strncmp(bytes, "GIF87a", 6) == 0 || strncmp(bytes, "GIF89a", 6) == 0) {
+            isGIF = YES;
         }
     }
     
-    BOOL isGIF = NO;
-    BOOL isVideo = NO;
-    
-    if (resolvedType) {
-        if ([resolvedType conformsToType:UTTypeGIF]) isGIF = YES;
-        else if ([resolvedType conformsToType:UTTypeMovie] || [resolvedType conformsToType:UTTypeVideo]) isVideo = YES;
-    } else {
-        NSString *typeLower = mediaType.lowercaseString;
-        NSString *extLower = (mediaURL ?: imageURL).pathExtension.lowercaseString;
-        if ([typeLower containsString:@"gif"] || [extLower isEqualToString:@"gif"]) isGIF = YES;
-        else if ([typeLower containsString:@"movie"] || [typeLower containsString:@"video"] || [extLower isEqualToString:@"mp4"] || [extLower isEqualToString:@"mov"]) isVideo = YES;
+    UTType *resolvedType = [UTType typeWithIdentifier:mediaType];
+    if (resolvedType && [resolvedType conformsToType:UTTypeGIF]) {
+        isGIF = YES;
+    } else if ([imageURL.pathExtension.lowercaseString isEqualToString:@"gif"]) {
+        isGIF = YES;
     }
     
-    if (isGIF) {
-        [self processPickedGIFWithURL:(imageURL ?: mediaURL) fallbackImage:originalImage];
-    } else if (isVideo) {
-        [self processPickedVideoWithURL:mediaURL];
+    BOOL isVideo = NO;
+    if (resolvedType && ([resolvedType conformsToType:UTTypeMovie] || [resolvedType conformsToType:UTTypeVideo])) {
+        isVideo = YES;
+    } else if ([mediaURL.pathExtension.lowercaseString isEqualToString:@"mp4"] || [mediaURL.pathExtension.lowercaseString isEqualToString:@"mov"]) {
+        isVideo = YES;
+    }
+    
+    [picker dismissViewControllerAnimated:YES completion:nil];
+    
+    if (isGIF && pickedRawData) {
+        [self saveGIFWithData:pickedRawData];
+    } else if (isVideo && mediaURL) {
+        [self processPickedVideoWithURL:mediaURL rawData:pickedRawData];
     } else {
-        [self processPickedImage:originalImage imageURL:imageURL];
+        [self processPickedImage:originalImage rawData:pickedRawData];
     }
 }
 
@@ -435,42 +442,30 @@
 
 #pragma mark - Process Media
 
-- (void)processPickedGIFWithURL:(NSURL *)gifURL fallbackImage:(UIImage *)image {
+- (void)saveGIFWithData:(NSData *)data {
     [self.activityIndicator startAnimating];
     
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSData *data = gifURL ? [NSData dataWithContentsOfURL:gifURL] : nil;
-        if (!data && image) data = UIImagePNGRepresentation(image);
+        [ThemeSettingsViewController removeSavedMediaFiles];
+        NSString *targetPath = [[ThemeSettingsViewController themeMediaDirectory] stringByAppendingPathComponent:@"custom_theme_media.gif"];
+        [data writeToFile:targetPath atomically:YES];
         
-        if (data && data.length > 0) {
-            [ThemeSettingsViewController removeSavedMediaFiles];
-            NSString *targetPath = [[ThemeSettingsViewController themeMediaDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.gif", kEeveeThemeMediaFileName]];
-            [data writeToFile:targetPath atomically:YES];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+            [defaults setInteger:EeveeThemeModeGIF forKey:kEeveeThemeModeKey];
+            [defaults setObject:@"gif" forKey:kEeveeThemeExtensionKey];
+            [defaults setBool:YES forKey:kEeveeThemeEnabledKey];
+            [defaults synchronize];
             
-            dispatch_async(dispatch_get_main_queue(), ^{
-                NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-                [defaults setInteger:EeveeThemeModeGIF forKey:kEeveeThemeModeKey];
-                [defaults setObject:@"gif" forKey:kEeveeThemeExtensionKey];
-                [defaults setBool:YES forKey:kEeveeThemeEnabledKey];
-                [defaults synchronize];
-                
-                [self.activityIndicator stopAnimating];
-                [self updatePreviewDisplay];
-                [self.tableView reloadData];
-                [self applyThemeSettings];
-            });
-        } else {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self.activityIndicator stopAnimating];
-                [self displayAlertWithTitle:@"Error" message:@"Failed to process GIF file."];
-            });
-        }
+            [self.activityIndicator stopAnimating];
+            [self updatePreviewDisplay];
+            [self.tableView reloadData];
+            [self applyThemeSettings];
+        });
     });
 }
 
-- (void)processPickedVideoWithURL:(NSURL *)videoURL {
-    if (!videoURL) return;
-    
+- (void)processPickedVideoWithURL:(NSURL *)videoURL rawData:(nullable NSData *)data {
     [self.activityIndicator startAnimating];
     
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -480,14 +475,13 @@
         [ThemeSettingsViewController removeSavedMediaFiles];
         NSString *targetPath = [[ThemeSettingsViewController themeMediaDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.%@", kEeveeThemeMediaFileName, ext]];
         
-        NSFileManager *fileManager = [NSFileManager defaultManager];
-        [fileManager removeItemAtPath:targetPath error:nil];
-        
-        NSError *error = nil;
-        BOOL success = [fileManager copyItemAtURL:videoURL toURL:[NSURL fileURLWithPath:targetPath] error:&error];
-        if (!success) {
-            NSData *videoData = [NSData dataWithContentsOfURL:videoURL];
-            success = [videoData writeToFile:targetPath atomically:YES];
+        BOOL success = NO;
+        if (data && data.length > 0) {
+            success = [data writeToFile:targetPath atomically:YES];
+        } else {
+            NSFileManager *fm = [NSFileManager defaultManager];
+            [fm removeItemAtPath:targetPath error:nil];
+            success = [fm copyItemAtURL:videoURL toURL:[NSURL fileURLWithPath:targetPath] error:nil];
         }
         
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -509,16 +503,20 @@
     });
 }
 
-- (void)processPickedImage:(UIImage *)image imageURL:(NSURL *)imageURL {
-    if (!image) return;
-    
+- (void)processPickedImage:(UIImage *)image rawData:(nullable NSData *)data {
     [self.activityIndicator startAnimating];
     
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSData *imageData = UIImageJPEGRepresentation(image, 0.92f) ?: UIImagePNGRepresentation(image);
+        NSData *imageData = data;
+        if (!imageData || imageData.length == 0) {
+            if (image) {
+                imageData = UIImageJPEGRepresentation(image, 0.92f) ?: UIImagePNGRepresentation(image);
+            }
+        }
+        
         if (imageData && imageData.length > 0) {
             [ThemeSettingsViewController removeSavedMediaFiles];
-            NSString *targetPath = [[ThemeSettingsViewController themeMediaDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.png", kEeveeThemeMediaFileName]];
+            NSString *targetPath = [[ThemeSettingsViewController themeMediaDirectory] stringByAppendingPathComponent:@"custom_theme_media.png"];
             [imageData writeToFile:targetPath atomically:YES];
             
             dispatch_async(dispatch_get_main_queue(), ^{
