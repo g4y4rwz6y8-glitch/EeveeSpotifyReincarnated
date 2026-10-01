@@ -8,7 +8,8 @@
 @property (nonatomic, strong, readwrite) UIImageView *imageView;
 @property (nonatomic, strong, readwrite) UIVisualEffectView *blurView;
 @property (nonatomic, strong, readwrite) UIView *dimmingView;
-@property (nonatomic, strong, nullable) UIImage *cachedGifImage;
+@property (nonatomic, strong, nullable) NSArray<UIImage *> *cachedFrames;
+@property (nonatomic, assign) NSTimeInterval cachedDuration;
 
 @end
 
@@ -64,16 +65,16 @@
 }
 
 + (nullable UIImage *)animatedGIFWithData:(NSData *)data {
-    if (!data || data.length == 0) return nil;
+    if (!data || data.length < 10) return nil;
     
     CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
     if (!source) return nil;
     
     size_t count = CGImageSourceGetCount(source);
     if (count <= 1) {
-        UIImage *singleImage = [UIImage imageWithData:data scale:[UIScreen mainScreen].scale];
+        UIImage *img = [UIImage imageWithData:data scale:[UIScreen mainScreen].scale];
         CFRelease(source);
-        return singleImage;
+        return img;
     }
     
     NSMutableArray<UIImage *> *images = [NSMutableArray arrayWithCapacity:count];
@@ -91,9 +92,9 @@
         if (properties) {
             CFDictionaryRef gifProperties = CFDictionaryGetValue(properties, kCGImagePropertyGIFDictionary);
             if (gifProperties) {
-                NSNumber *unclampedDelay = CFDictionaryGetValue(gifProperties, kCGImagePropertyGIFUnclampedDelayTime);
-                if (unclampedDelay && unclampedDelay.doubleValue > 0.0) {
-                    frameDuration = unclampedDelay.doubleValue;
+                NSNumber *unclamped = CFDictionaryGetValue(gifProperties, kCGImagePropertyGIFUnclampedDelayTime);
+                if (unclamped && unclamped.doubleValue > 0.0) {
+                    frameDuration = unclamped.doubleValue;
                 } else {
                     NSNumber *delay = CFDictionaryGetValue(gifProperties, kCGImagePropertyGIFDelayTime);
                     if (delay && delay.doubleValue > 0.0) {
@@ -130,12 +131,52 @@
             }
         }
         
-        UIImage *animatedImage = [SPTGifRenderer animatedGIFWithData:gifData];
-        self.cachedGifImage = animatedImage;
+        if (!gifData) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self.rendererView.hidden = YES;
+            });
+            return;
+        }
+        
+        CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)gifData, NULL);
+        if (!source) return;
+        
+        size_t count = CGImageSourceGetCount(source);
+        NSMutableArray<UIImage *> *frames = [NSMutableArray arrayWithCapacity:count];
+        NSTimeInterval duration = 0.0;
+        
+        for (size_t i = 0; i < count; i++) {
+            CGImageRef imgRef = CGImageSourceCreateImageAtIndex(source, i, NULL);
+            if (!imgRef) continue;
+            [frames addObject:[UIImage imageWithCGImage:imgRef]];
+            CGImageRelease(imgRef);
+            
+            NSTimeInterval delay = 0.1;
+            CFDictionaryRef prop = CGImageSourceCopyPropertiesAtIndex(source, i, NULL);
+            if (prop) {
+                CFDictionaryRef gifProp = CFDictionaryGetValue(prop, kCGImagePropertyGIFDictionary);
+                if (gifProp) {
+                    NSNumber *d = CFDictionaryGetValue(gifProp, kCGImagePropertyGIFUnclampedDelayTime) ?: CFDictionaryGetValue(gifProp, kCGImagePropertyGIFDelayTime);
+                    if (d && d.doubleValue > 0.0) delay = d.doubleValue;
+                }
+                CFRelease(prop);
+            }
+            if (delay < 0.02) delay = 0.1;
+            duration += delay;
+        }
+        CFRelease(source);
         
         dispatch_async(dispatch_get_main_queue(), ^{
-            self.imageView.image = animatedImage;
-            self.rendererView.hidden = (animatedImage == nil);
+            self.cachedFrames = frames;
+            self.cachedDuration = duration;
+            
+            self.imageView.animationImages = frames;
+            self.imageView.animationDuration = duration;
+            self.imageView.animationRepeatCount = 0;
+            self.imageView.image = frames.firstObject;
+            
+            [self.imageView startAnimating];
+            self.rendererView.hidden = (frames.count == 0);
         });
     });
 }
@@ -167,10 +208,6 @@
         } else {
             self.blurView.hidden = YES;
         }
-        
-        if (!self.cachedGifImage) {
-            [self reloadGif];
-        }
     };
     
     if ([NSThread isMainThread]) {
@@ -182,11 +219,14 @@
 
 - (void)startRendering {
     [self applySettings];
-    if (self.cachedGifImage) {
-        self.imageView.image = self.cachedGifImage;
+    if (self.cachedFrames.count > 0) {
+        self.imageView.animationImages = self.cachedFrames;
+        self.imageView.animationDuration = self.cachedDuration;
         [self.imageView startAnimating];
+        self.rendererView.hidden = NO;
+    } else {
+        [self reloadGif];
     }
-    self.rendererView.hidden = (self.cachedGifImage == nil);
 }
 
 - (void)stopRendering {
