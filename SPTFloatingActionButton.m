@@ -22,14 +22,13 @@
 }
 
 - (void)setupModernButton {
-    CGFloat size = 48.0f;
+    CGFloat size = 44.0f; // Compact, unobtrusive diameter
     CGRect screenBounds = [UIScreen mainScreen].bounds;
     
     self.frame = CGRectMake(screenBounds.size.width - size - 16.0f, screenBounds.size.height - size - 150.0f, size, size);
     self.layer.cornerRadius = size / 2.0f;
     self.layer.masksToBounds = NO;
     
-    // Modern Glassmorphism Backing
     UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
     self.glassBackground = [[UIVisualEffectView alloc] initWithEffect:blur];
     self.glassBackground.frame = self.bounds;
@@ -41,22 +40,25 @@
     self.layer.borderColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:0.85].CGColor;
     self.layer.borderWidth = 1.5f;
     
-    self.layer.shadowColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:0.50].CGColor;
-    self.layer.shadowOffset = CGSizeMake(0, 4);
-    self.layer.shadowOpacity = 0.6f;
-    self.layer.shadowRadius = 8.0f;
+    self.layer.shadowColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:0.45].CGColor;
+    self.layer.shadowOffset = CGSizeMake(0, 3);
+    self.layer.shadowOpacity = 0.5f;
+    self.layer.shadowRadius = 6.0f;
     
     if (@available(iOS 13.0, *)) {
-        UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightSemibold];
+        UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightSemibold];
         UIImage *paletteIcon = [UIImage systemImageNamed:@"paintpalette.fill" withConfiguration:config];
+        if (!paletteIcon) {
+            paletteIcon = [UIImage systemImageNamed:@"paintbrush.fill" withConfiguration:config];
+        }
         [self setImage:paletteIcon forState:UIControlStateNormal];
         self.tintColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
     } else {
         [self setTitle:@"🎨" forState:UIControlStateNormal];
-        self.titleLabel.font = [UIFont systemFontOfSize:22];
+        self.titleLabel.font = [UIFont systemFontOfSize:20];
     }
     
-    self.feedbackGenerator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    self.feedbackGenerator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
     [self.feedbackGenerator prepare];
     
     [self addTarget:self action:@selector(buttonTapped) forControlEvents:UIControlEventTouchUpInside];
