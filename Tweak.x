@@ -7,37 +7,31 @@
 #import "SPTFloatingActionButton.h"
 #import "ThemeSettingsViewController.h"
 
-// Recursively strips opaque backgrounds across Spotify container hierarchies
-static void StripViewAndSubviews(UIView *view, NSInteger depth) {
-    if (!view || depth > 5) return;
+static char kGlassShieldKey;
+
+// Injects an acrylic frosted glass backdrop so pushed navigation pages don't show double text
+static void EnsureFrostedBackdrop(UIViewController *vc) {
+    if (!vc || !vc.view || ![SPTCustomThemeManager isCustomThemeActive]) return;
     
-    NSString *cls = NSStringFromClass([view class]);
+    if (objc_getAssociatedObject(vc, &kGlassShieldKey)) return;
     
-    // Protect UI controls from being stripped of necessary interactive visual state
-    if ([view isKindOfClass:[UIButton class]] || [view isKindOfClass:[UISwitch class]] || [view isKindOfClass:[UISlider class]]) {
-        return;
-    }
+    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+    UIVisualEffectView *shield = [[UIVisualEffectView alloc] initWithEffect:blur];
+    shield.frame = vc.view.bounds;
+    shield.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    shield.userInteractionEnabled = NO;
+    shield.alpha = 0.88f;
     
-    if (view.backgroundColor && view.backgroundColor != [UIColor clearColor]) {
-        view.backgroundColor = [UIColor clearColor];
-    }
-    view.opaque = NO;
+    UIView *darkTint = [[UIView alloc] initWithFrame:shield.bounds];
+    darkTint.backgroundColor = [UIColor colorWithRed:0.07 green:0.07 blue:0.08 alpha:0.65];
+    darkTint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [shield.contentView addSubview:darkTint];
     
-    // Eliminate gradient/dimming masks
-    if ([cls containsString:@"GLUEGradient"] || 
-        [cls containsString:@"SPTNowPlayingBackgroundView"] ||
-        [cls containsString:@"DimmingView"] ||
-        [cls containsString:@"GradientOverlay"]) {
-        view.alpha = 0.0;
-        view.hidden = YES;
-    }
-    
-    for (UIView *subview in view.subviews) {
-        StripViewAndSubviews(subview, depth + 1);
-    }
+    [vc.view insertSubview:shield atIndex:0];
+    objc_setAssociatedObject(vc, &kGlassShieldKey, shield, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-// 1. Hook UIWindow to establish layer 0 anchoring and floating button attachment
+// 1. Hook UIWindow for persistent wallpaper anchoring and shortcut triggers
 %hook UIWindow
 
 - (void)makeKeyAndVisible {
@@ -75,59 +69,104 @@ static void StripViewAndSubviews(UIView *view, NSInteger depth) {
 
 %end
 
-// 2. Comprehensive UIViewController hook: Fixes "Your Library", Home, Search & Now Playing
+// 2. Hook UIViewController: Transparent Root Feeds vs. Frosted Pushed Subpages
 %hook UIViewController
 
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    if ([SPTCustomThemeManager isCustomThemeActive]) {
-        NSString *className = NSStringFromClass([self class]);
-        
-        // Match Spotify's root, library, navigation, and page containers
-        if ([className containsString:@"SPT"] ||
-            [className containsString:@"Library"] ||
-            [className containsString:@"YourLibrary"] ||
-            [className containsString:@"Root"] ||
-            [className containsString:@"Navigation"] ||
-            [className containsString:@"TabBar"] ||
-            [className containsString:@"Page"] ||
-            [className containsString:@"Home"] ||
-            [className containsString:@"Search"] ||
-            [className containsString:@"HUB"] ||
-            [className containsString:@"Hub"] ||
-            [className containsString:@"NowPlaying"]) {
-            
-            StripViewAndSubviews(self.view, 0);
-        }
-        
-        [[SPTCustomThemeManager sharedInstance] ensureAttached];
+    if (![SPTCustomThemeManager isCustomThemeActive]) return;
+    
+    NSString *cls = NSStringFromClass([self class]);
+    BOOL isPushedChild = (self.navigationController && self.navigationController.viewControllers.count > 1);
+    
+    // Side drawer / Profile / Context modals
+    if ([cls containsString:@"Profile"] || [cls containsString:@"Drawer"] || [cls containsString:@"ContextMenu"] || [cls containsString:@"Message"]) {
+        EnsureFrostedBackdrop(self);
+        return;
     }
     
-    UIWindow *win = self.view.window ?: [UIApplication sharedApplication].keyWindow;
-    if (win) {
-        [[SPTFloatingActionButton sharedInstance] attachToWindow:win];
+    // Pushed sub-pages (Settings, Playback, Album tracklist, Playlist details)
+    if (isPushedChild || [cls containsString:@"Settings"] || [cls containsString:@"Playback"]) {
+        EnsureFrostedBackdrop(self);
+        return;
     }
+    
+    // Primary Root Views (Home, Search Browse, Your Library main view): Pure transparent
+    if ([cls containsString:@"Root"] ||
+        [cls containsString:@"Home"] ||
+        [cls containsString:@"Library"] ||
+        [cls containsString:@"YourLibrary"] ||
+        [cls containsString:@"Search"] ||
+        [cls containsString:@"Navigation"] ||
+        [cls containsString:@"TabBar"] ||
+        [cls containsString:@"Page"]) {
+        
+        self.view.backgroundColor = [UIColor clearColor];
+        self.view.opaque = NO;
+    }
+    
+    [[SPTCustomThemeManager sharedInstance] ensureAttached];
 }
 
-- (void)viewDidLayoutSubviews {
+%end
+
+// 3. Search Field / Keyboard Focus Hook (Eliminates overlap in screenshot 00:05)
+%hook UISearchBar
+
+- (BOOL)becomeFirstResponder {
+    BOOL res = %orig;
+    [[SPTFloatingActionButton sharedInstance] setFloatingAlpha:0.0 animated:YES];
+    return res;
+}
+
+- (BOOL)resignFirstResponder {
+    BOOL res = %orig;
+    [[SPTFloatingActionButton sharedInstance] setFloatingAlpha:1.0 animated:YES];
+    return res;
+}
+
+%end
+
+// 4. Hook Collection & Table Views
+%hook UICollectionView
+
+- (void)layoutSubviews {
     %orig;
     if ([SPTCustomThemeManager isCustomThemeActive]) {
-        NSString *className = NSStringFromClass([self class]);
-        if ([className containsString:@"Library"] ||
-            [className containsString:@"YourLibrary"] ||
-            [className containsString:@"Root"] ||
-            [className containsString:@"Page"] ||
-            [className containsString:@"Home"] ||
-            [className containsString:@"Navigation"]) {
-            
-            StripViewAndSubviews(self.view, 0);
+        NSString *parentClass = NSStringFromClass([self.superview class]);
+        // Give active search suggestions a frosted dark backdrop so underlying categories don't bleed through
+        if ([parentClass containsString:@"Search"] || [NSStringFromClass([self class]) containsString:@"Search"]) {
+            self.backgroundColor = [UIColor colorWithRed:0.07 green:0.07 blue:0.08 alpha:0.92];
+        } else {
+            self.backgroundColor = [UIColor clearColor];
         }
+        if (self.backgroundView) {
+            self.backgroundView.hidden = YES;
+            self.backgroundView.alpha = 0.0;
+        }
+        self.opaque = NO;
     }
 }
 
 %end
 
-// 3. Hook Navigation Bars to eliminate opaque navigation header headers
+%hook UITableView
+
+- (void)layoutSubviews {
+    %orig;
+    if ([SPTCustomThemeManager isCustomThemeActive]) {
+        self.backgroundColor = [UIColor clearColor];
+        if (self.backgroundView) {
+            self.backgroundView.hidden = YES;
+            self.backgroundView.alpha = 0.0;
+        }
+        self.opaque = NO;
+    }
+}
+
+%end
+
+// 5. Hook Navigation Bars
 %hook UINavigationBar
 
 - (void)layoutSubviews {
@@ -143,44 +182,7 @@ static void StripViewAndSubviews(UIView *view, NSInteger depth) {
 
 %end
 
-// 4. Hook Collection & Table views (Playlists, Library lists, Album tracks)
-%hook UICollectionView
-
-- (void)layoutSubviews {
-    %orig;
-    if ([SPTCustomThemeManager isCustomThemeActive]) {
-        if (self.backgroundColor != [UIColor clearColor]) {
-            self.backgroundColor = [UIColor clearColor];
-        }
-        if (self.backgroundView != nil && !self.backgroundView.hidden) {
-            self.backgroundView.hidden = YES;
-            self.backgroundView.alpha = 0.0;
-        }
-        self.opaque = NO;
-    }
-}
-
-%end
-
-%hook UITableView
-
-- (void)layoutSubviews {
-    %orig;
-    if ([SPTCustomThemeManager isCustomThemeActive]) {
-        if (self.backgroundColor != [UIColor clearColor]) {
-            self.backgroundColor = [UIColor clearColor];
-        }
-        if (self.backgroundView != nil && !self.backgroundView.hidden) {
-            self.backgroundView.hidden = YES;
-            self.backgroundView.alpha = 0.0;
-        }
-        self.opaque = NO;
-    }
-}
-
-%end
-
-// 5. Hook Collection and Table Cells to ensure transparent row backgrounds
+// 6. Hook Cells (Translucent Rows)
 %hook UICollectionViewCell
 
 - (void)didMoveToWindow {
@@ -209,34 +211,73 @@ static void StripViewAndSubviews(UIView *view, NSInteger depth) {
 
 %end
 
-// 6. Hook Spotify-specific container & gradient views
+// 7. Strip Harsh Dark Gradients
 %hook UIView
 
 - (void)didMoveToWindow {
     %orig;
     if ([SPTCustomThemeManager isCustomThemeActive]) {
         NSString *cls = NSStringFromClass([self class]);
-        
         if ([cls containsString:@"GLUEGradient"] ||
             [cls containsString:@"SPTNowPlayingBackgroundView"] ||
-            [cls containsString:@"SPTLibraryHeader"] ||
-            [cls containsString:@"SPTPageContainer"] ||
-            [cls containsString:@"SPTFilterBar"]) {
-            
-            self.backgroundColor = [UIColor clearColor];
-            self.opaque = NO;
-            
-            if ([cls containsString:@"GLUEGradient"] || [cls containsString:@"SPTNowPlayingBackgroundView"]) {
-                self.alpha = 0.0;
-                self.hidden = YES;
-            }
+            [cls containsString:@"GradientOverlay"]) {
+            self.alpha = 0.0;
+            self.hidden = YES;
         }
     }
 }
 
 %end
 
-// 7. Initialize Theme Engine & Floating Trigger on App Launch
+// 8. Inject "Liquid Glass Studio" Directly into Spotify Native Settings
+%hook SPTSettingsViewController
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return %orig + 1;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    if (section == 0) return 1;
+    return %orig(tableView, section - 1);
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (section == 0) return @"Theme Customization";
+    return %orig(tableView, section - 1);
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (indexPath.section == 0) {
+        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"LiquidGlassCell"];
+        if (!cell) {
+            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"LiquidGlassCell"];
+            cell.backgroundColor = [UIColor colorWithRed:0.12 green:0.12 blue:0.14 alpha:0.9];
+            cell.textLabel.textColor = [UIColor colorWithRed:0.118 green:0.843 blue:0.376 alpha:1.0];
+            cell.textLabel.font = [UIFont boldSystemFontOfSize:16];
+            cell.detailTextLabel.textColor = [UIColor lightGrayColor];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        }
+        cell.textLabel.text = @"Liquid Glass Studio";
+        cell.detailTextLabel.text = @"Customize background, blur & glassmorphism";
+        return cell;
+    }
+    NSIndexPath *origPath = [NSIndexPath indexPathForRow:indexPath.row inSection:indexPath.section - 1];
+    return %orig(tableView, origPath);
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (indexPath.section == 0) {
+        [tableView deselectRowAtIndexPath:indexPath animated:YES];
+        [[SPTFloatingActionButton sharedInstance] presentThemeSettings];
+        return;
+    }
+    NSIndexPath *origPath = [NSIndexPath indexPathForRow:indexPath.row inSection:indexPath.section - 1];
+    %orig(tableView, origPath);
+}
+
+%end
+
+// 9. Early App Launch Initialization
 %hook SpotifyAppDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
